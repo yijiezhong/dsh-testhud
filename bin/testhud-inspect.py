@@ -16,11 +16,22 @@ import subprocess
 import sys
 from glob import glob
 
+from collections import Counter
+
 from PIL import Image, ImageStat
 
 HOME = os.path.expanduser("~")
 FRAME_FILE = f"{HOME}/.dsh/dsh-testhud/panel-frame.json"
 PROGRESS_FILE = f"{HOME}/.dsh/test-progress.json"
+
+
+def _lum(c):
+    return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255
+
+
+def _contrast(a, b):
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
 
 def find_ocr():
@@ -67,7 +78,7 @@ def panel_strings():
     out = [data.get("title", ""), data.get("target", ""), data.get("note", "")]
     for step in data.get("steps", []):
         out += [step.get("name", ""), step.get("expect", ""), step.get("actual", "")]
-    return FIXED_TEXT + [s.strip() for s in out if s and len(s.strip()) >= 4]
+    return FIXED_TEXT + [s.strip() for s in out if s and len(s.strip()) >= 3]
 
 
 def belongs(text, known):
@@ -126,6 +137,7 @@ def main():
     print("  （面板文字之间的底应该很平；这里的低方差行占比就是'背景被压平'的程度）")
 
     # 二、面板内的文字：与面板自己的内容比对，不匹配的行很可能是从背景透上来的
+    # 三、面板自己每一行的对比度（用 OCR 的行框，逐行量"文字 vs 它所在的那片底"）
     ocr = find_ocr()
     if ocr:
         out = subprocess.run([ocr, shot], capture_output=True, text=True)
@@ -141,6 +153,26 @@ def main():
         print(f"  不属于面板内容的（= 从背景透上来的嫌疑）: {len(foreign)} 行")
         for i in sorted(foreign, key=lambda i: i["y"])[:8]:
             print(f"    y={i['y']:5d}  {i['text'][:56]}")
+
+        mine = [i for i in inside if belongs(i["text"], known)]
+        print("\n面板自己每一行的对比度")
+        worst, worst_text = 99.0, ""
+        for i in sorted(mine, key=lambda i: i["y"]):
+            bx0, by0 = max(0, i["x"] - 2), max(0, i["y"] - 2)
+            bx1, by1 = min(im.width, i["x"] + i["w"] + 2), min(im.height, i["y"] + i["h"] + 2)
+            px = [im.getpixel((x, y)) for y in range(by0, by1) for x in range(bx0, bx1)]
+            if not px:
+                continue
+            plate = Counter(px).most_common(1)[0][0]
+            core = sorted(px, key=lambda c: abs(_lum(c) - _lum(plate)), reverse=True)[:max(4, len(px) // 50)]
+            text = tuple(sum(c[k] for c in core) // len(core) for k in range(3))
+            r = _contrast(plate, text)
+            if r < worst:
+                worst, worst_text = r, i["text"][:36]
+            mark = "AAA" if r >= 7 else ("AA" if r >= 4.5 else "低")
+            print(f"  {mark:>3}  {r:5.1f}:1  {i['text'][:40]}")
+        if worst < 99:
+            print(f"  最低 {worst:.1f}:1  ← {worst_text}")
     else:
         print("\n（没找到 OCR 工具，跳过文字比对）")
     return 0

@@ -150,7 +150,11 @@ enum Theme {
     /// 0.10 / 0.20 都试过：密集文字背景上各会漏 1 行，而且漏的总是**背景上刚打出来的内容** ——
     /// SCK 采样有 100~300ms 延迟，追不上正在被打印的字，这是采样式底图的固有代价。
     /// 0.35 是这几轮里唯一实测 0 漏的值。
-    static let fillAlpha: CGFloat = 0.35
+    /// 面板底的目标亮度：让面板**离开中灰**。浅面板要够亮、深面板要够暗，
+    /// 否则不管配深字还是白字都压不住（实测：终端里密布文字时平均亮度被抬到 0.45，
+    /// 固定 0.35 的不透明度只把面板提到 0.64，深字只有 4.0:1）。
+    static let lightPanelTarget: CGFloat = 0.72
+    static let darkPanelTarget: CGFloat = 0.25
     // 目标一律写成**对比度**（WCAG 风格：(亮+0.05)/(暗+0.05)），不是"亮度差" ——
     // 这两者差得很远：0.6 的亮度差换算过来只有 ~1.6:1。
     // 目标按 **AAA**（18pt 属大字号，AAA 要 7:1）再**留一档余量**取 9 ——
@@ -169,7 +173,7 @@ enum Theme {
     /// 夹在 [0.30, 0.95] —— 下界保证这一层还看得见，上界保证它不变成死板的实心块。
     static func solveAlpha(over under: CGFloat, base: CGFloat, wanted: CGFloat) -> CGFloat {
         guard abs(base - under) > 0.01 else { return 0.75 }
-        return min(0.98, max(0.30, (wanted - under) / (base - under)))
+        return min(0.98, max(0.10, (wanted - under) / (base - under)))
     }
 
     /// "亮度 text 的文字要够 `contrast`，衬底该落在什么亮度"。
@@ -186,7 +190,10 @@ enum Theme {
         // （反着来才需要不透明的底板去救 —— 那正是"遮挡太重"的来源。）
         let lightPanel = backdrop > 0.35
         let fillBase = lightPanel ? NSColor.white : NSColor(calibratedWhite: 0.02, alpha: 1)
-        let fillAlpha: CGFloat = 0.10
+        // 不透明度由"要把面板提到/压到目标的亮度"反解 —— 和配色一样是算出来的，不是常量：
+        // 背景已经在两端时它自然落到下限（面板几乎全透），背景落在中灰时才提上去把面板推离中灰。
+        let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
+                                   wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
 
         let primary = lightPanel ? NSColor(calibratedWhite: 0.06, alpha: 1) : NSColor.white
         // 没有底板之后，两级的对比只能靠**颜色本身**拉开 —— secondaryContrast 那类目标解的是底板的不透明度，
