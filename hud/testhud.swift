@@ -162,7 +162,21 @@ enum Theme {
     // 留余量顺带把衬底做得更实，透下来内容对它的干扰也更小。
     static let primaryContrast: CGFloat = 10     // 标题 / 步骤名 / 结论
     static let secondaryContrast: CGFloat = 12   // 期待 / 实际 / 元信息（实测比目标低一档，再留余量）
-    static let alertContrast: CGFloat = 9        // 色带上的黑字
+    /// 色带上黑字的对比目标。这里**故意只取 AAA 对大字号的门槛（4.5）**，不跟着文字一起上 9 ——
+    /// 黄底为了 9:1 得压到亮度 0.94，而黄色本身只有 0.77，解出来的不透明度会超过 1（被夹到 0.98，
+    /// 成了一条不透光的色纸，把后面的文字全挡掉）。取 4.5 时解出来正好是半透明，后面的字还能看见。
+    static let alertContrast: CGFloat = 4.5
+    /// 色带的不透明度：钉住不动（用户要求"能看到后面的文字"）；明度不够时去调明度。
+    static let bannerAlpha: CGFloat = 0.55
+
+    /// 色带的一层：固定色相与不透明度，**明度反解**到"上面的黑字刚好够 `alertContrast`"。
+    /// 面板本来就够亮时它自然变暗（那时黑字在面板上已有对比，色带不必再亮）。
+    static func banner(hue: CGFloat, saturation: CGFloat, alpha: CGFloat, panelLum: CGFloat) -> NSColor {
+        let floor = plateLum(text: 0.06, contrast: alertContrast, darker: false)
+        let needed = (floor - (1 - alpha) * panelLum) / max(0.05, alpha)
+        return NSColor(calibratedHue: hue, saturation: saturation,
+                       brightness: min(1.0, max(0.30, needed)), alpha: alpha)
+    }
 
     static func luminance(_ color: NSColor) -> CGFloat {
         let c = color.usingColorSpace(.deviceRGB) ?? color
@@ -173,7 +187,13 @@ enum Theme {
     /// 夹在 [0.30, 0.95] —— 下界保证这一层还看得见，上界保证它不变成死板的实心块。
     static func solveAlpha(over under: CGFloat, base: CGFloat, wanted: CGFloat) -> CGFloat {
         guard abs(base - under) > 0.01 else { return 0.75 }
-        return min(0.98, max(0.10, (wanted - under) / (base - under)))
+        // 下限 0.50（用户定的取舍）：**"接近全透"在高对比底层上不成立**。
+        // 面板压在终端那种铺满整屏的黑底白字上时，底图（模糊 + 压淡）压不平残余，
+        // 下限放到 0.10 会让残余直接暴露、面板自己的文字掉到 2.2:1（实测）。
+        // 而挡不住的原因不是"不够实" —— 底层是 ~15:1 的高对比内容，要完全挡住得实到 0.8 以上，
+        // 那就等于不透明了。所以这里选 0.50：面板文字在普通背景上早已远超 AAA，
+        // 被遮挡区域仍然看得出明暗与形状。
+        return min(0.98, max(0.50, (wanted - under) / (base - under)))
     }
 
     /// "亮度 text 的文字要够 `contrast`，衬底该落在什么亮度"。
@@ -201,12 +221,12 @@ enum Theme {
         let secondary = lightPanel ? NSColor(calibratedWhite: 0.08, alpha: 1)
                                    : NSColor(calibratedWhite: 0.90, alpha: 1)
 
-        let runBase = NSColor(calibratedRed: 1.00, green: 0.78, blue: 0.00, alpha: 1)
-        let doneBase = NSColor(calibratedRed: 0.16, green: 0.80, blue: 0.38, alpha: 1)
         let panelLum = fillAlpha * luminance(fillBase) + (1 - fillAlpha) * backdrop
-        let alertFloor = plateLum(text: 0.06, contrast: alertContrast, darker: false)
-        let runAlpha = solveAlpha(over: panelLum, base: luminance(runBase), wanted: alertFloor)
-        let doneAlpha = solveAlpha(over: panelLum, base: luminance(doneBase), wanted: alertFloor)
+        // 色带也交给"变色龙"：**色相**按状态固定（黄=别动、绿=可以接手，语义不能变），
+        // **明度**由环境反解 —— 目标是"上面的黑字够 4.5:1"，不透明度钉在 0.55（后面的字要能看见）。
+        // 明度不够就调明度，而不是一路加不透明度（那样会变成一条不透光的色纸）。
+        let runBase = banner(hue: 0.14, saturation: 1.00, alpha: bannerAlpha, panelLum: panelLum)
+        let doneBase = banner(hue: 0.38, saturation: 0.85, alpha: bannerAlpha, panelLum: panelLum)
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
@@ -223,8 +243,8 @@ enum Theme {
             primary: primary,
             secondary: secondary,
             textPlate: NSColor.clear,
-            alertRunBg: runBase.withAlphaComponent(runAlpha),
-            alertDoneBg: doneBase.withAlphaComponent(doneAlpha),
+            alertRunBg: runBase,
+            alertDoneBg: doneBase,
             stateOk: stateOk, stateBad: stateBad, stateRun: stateRun, stateInfo: stateInfo)
     }
 }
@@ -540,10 +560,13 @@ final class HUD: NSObject, NSApplicationDelegate {
                 // 贴到面板上拉伸之后，面板的边缘区域其实根本没有底图覆盖，原始背景就直接露出来了
                 // （这就是"密集文字仍能读出来"的真正原因，查了很久）。
                 let ci = CIImage(cgImage: cropped)
-                let blurredCI = ci.applyingGaussianBlur(sigma: 26)
+                // σ 与对比度是两把不同的刀：σ 负责把字形化开，对比度负责把剩下的痕迹压淡。
+                // 面板压在最密的文字上时（终端铺满整屏的 ls 输出），σ=26 之后仍留下条纹状的痕迹
+                // —— 低方差行占比只有 16%（稀疏背景时是 43~51%），所以两把刀都加一点。
+                let blurredCI = ci.applyingGaussianBlur(sigma: 34)
                     .applyingFilter("CIColorControls", parameters: [
-                        kCIInputContrastKey: 0.85,
-                        kCIInputSaturationKey: 0.85,
+                        kCIInputContrastKey: 0.40,
+                        kCIInputSaturationKey: 0.70,
                     ])
                 blurred = CIContext().createCGImage(blurredCI, from: ci.extent)
             }

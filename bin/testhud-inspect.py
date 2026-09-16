@@ -123,6 +123,13 @@ def main():
         print(f"  截图只有 {im.size}，裁不到面板区域")
         return 1
 
+    # 环境自检放在最前面 —— 它是唯一挡住"测了半天其实压错了应用"的东西，
+    # 而前面几轮栽的正是这个（忘了切前台、面板被避让规则推离文字区）。
+    front = subprocess.run(
+        ["osascript", "-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
+        capture_output=True, text=True).stdout.strip()
+    print(f"前台应用: {front or '(读不到)'}   ← 面板应该压在它上面；不是你想测的那个就先切前台再跑")
+
     # 一、面板内的纹理：逐行算 stddev。面板自己的文字之间是大片被压平的底 —— 那里应该很平。
     crop = im.crop((x0, y0, x1, y1))
     gray = crop.convert("L")
@@ -135,6 +142,9 @@ def main():
     print("\n面板内纹理（每 8px 一行，数值 = 该行的明暗标准差）")
     print(f"  低方差行占比 {len(flat)/max(1,len(rows))*100:.0f}%   中位数 {sorted(rows)[len(rows)//2]:.1f}   最高 {max(rows):.1f}")
     print("  （面板文字之间的底应该很平；这里的低方差行占比就是'背景被压平'的程度）")
+    median = sorted(rows)[len(rows) // 2]
+    if median < 8:
+        print("  ⚠️ 面板内几乎没有纹理 —— 底下是纯色区域，这次测不出'面板文字与背景文字叠加'的问题")
 
     # 二、面板内的文字：与面板自己的内容比对，不匹配的行很可能是从背景透上来的
     # 三、面板自己每一行的对比度（用 OCR 的行框，逐行量"文字 vs 它所在的那片底"）
@@ -150,7 +160,12 @@ def main():
         foreign = [i for i in inside if not belongs(i["text"], known)]
         print(f"\n面板内的文字（OCR）")
         print(f"  共 {len(inside)} 行，其中属于面板自己的 {len(inside)-len(foreign)} 行")
+        if len(inside) == 0:
+            print("  ⚠️ 面板区域内一行文字都没读到 —— 面板可能根本没显示在这个位置（先核对浮层是否在跑）")
         print(f"  不属于面板内容的（= 从背景透上来的嫌疑）: {len(foreign)} 行")
+        mine_n = len(inside) - len(foreign)
+        if len(foreign) > 5 and len(foreign) > mine_n:
+            print("  ⚠️ 背景文字比面板自己的还多 —— 多半是压错了应用：先看上面那行'前台应用'")
         for i in sorted(foreign, key=lambda i: i["y"])[:8]:
             print(f"    y={i['y']:5d}  {i['text'][:56]}")
 
