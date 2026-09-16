@@ -71,9 +71,21 @@ def panel_strings():
 
 
 def belongs(text, known):
-    """OCR 的行是否属于面板自己的内容（按去空白后的子串判断）。"""
+    """OCR 的行是否属于面板自己的内容。
+    用**任意连续 4 字片段**匹配，而不是整段前缀 —— OCR 常把个别字认错
+    （实测把面板自己的"穿透检查"读成"穿透检査"，整段匹配就会误报成背景穿透）。"""
     flat = re.sub(r"\s+", "", text)
-    return any(re.sub(r"\s+", "", k)[:8] in flat for k in known)
+    for k in known:
+        k2 = re.sub(r"\s+", "", k)
+        if len(k2) < 3:                      # 短关键字（"开始"、"已用"）整段找
+            if k2 in flat:
+                return True
+            continue
+        n = min(3, len(k2))                  # 长关键字用 3-gram：OCR 认错一个字也能匹配上
+        for i in range(len(k2) - n + 1):
+            if k2[i:i + n] in flat:
+                return True
+    return False
 
 
 def main():
