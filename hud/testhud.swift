@@ -7,7 +7,7 @@
 //
 // 版面按 CRAP 定规矩（Contrast / Repetition / Alignment / Proximity）：
 //   · **Contrast**：彩色只留给"状态"这一个语义 —— 顶部控制权色带 + 步骤行首那一个字符。
-//     其余层次全靠**灰度三级**（1.0 / 0.78 / 0.58）+ **字重四档**（heavy / bold / semibold / regular），
+//     其余层次全靠**两级灰**（浅面板 0.06 / 0.08，深面板 white / 0.90）+ **字重四档**（heavy / bold / semibold / regular），
 //     不靠字号（用户要求全部文字同一个字号）。
 //   · **Repetition**：所有内容贴同一条左边界（inset）；间距只有三个值 —— 组间 14、步骤间 10、行内 2~4。
 //   · **Alignment**：控制权色带通栏，文字用 headIndent 回到内容左边界；步骤的"期待/实际"用真正的
@@ -17,7 +17,8 @@
 //     底部两个角已取消：面板高度随步骤增长、高度变化时顶边不动，贴底时下半截会被屏幕下缘切掉。
 //   · **大小**：随内容增减，到上限（屏幕可见高度的 62%）为止。
 //   · **滚动**：只有步骤区滚动，**头部固定**；新步骤进来自动滚到底。
-//   · **透明度**：面板底色 0.80 —— 白字在浅色背景（白色 PDF、浅色主题编辑器）上能不能读全靠它。
+//   · **透明度**：面板底的不透明度**由环境反解**（见 Theme），下限 0.50（用户定的取舍）；
+//     方向与背景同向 —— 浅背景配更亮的面板 + 深字，深背景配更暗的面板 + 白字。
 //   · **层级**：`panel.level = .screenSaver` —— 压在所有窗口之上。
 //   · **字号**：全部 18（`Look.base`），唯一可调的地方。
 //
@@ -78,16 +79,6 @@ private enum Look {
     static let lineGap: CGFloat = 3             // 行内行距
     static let stepIndent: CGFloat = 28         // 步骤第二行（期待/实际）的缩进 = 行首 mark + 序号宽
 
-    /// 面板：**浅色磨砂** —— 系统模糊把底下糊匀，再压一层白。
-    /// 浅底 + 深字是这个浮层最舒服的组合：颜色轻、不压眼（"柔、清新"），
-    /// 而深色笔画压在半透明白上，边缘对比足、不发虚（"字要锐"）；白字压在深底上则容易发糊。
-    /// 唯一要注意的是白色背景上缺边界，靠 1pt 深色描边 + 系统阴影分开。
-    /// 深灰半透明（用户点名要的观感）：只压到"看得清、下面也看得见"的程度，不做模糊 ——
-    /// 模糊会把下面的内容化成色块，那正是"看不到被测对象"的来源。
-    /// 白背景上它落到中灰、深背景上接近纯黑，所以**文字必须自带衬底**（见 textPlate）。
-    static let panelFill = NSColor(calibratedRed: 0.098, green: 0.106, blue: 0.125, alpha: 0.44)
-    static let panelBorder = NSColor(calibratedWhite: 1.0, alpha: 0.14)
-
     // 同一字号（base），四档字重；层次另一半来自灰度。
     static let alertFont = NSFont.systemFont(ofSize: base, weight: .heavy)      // 控制权色带
     static let titleFont = NSFont.systemFont(ofSize: base, weight: .bold)       // 标题
@@ -96,9 +87,8 @@ private enum Look {
     /// 计时用等宽数字：秒数跳动时不会左右抖。
     static let metaFont = NSFont.monospacedDigitSystemFont(ofSize: base, weight: .regular)
 
-    // 控制权色带：两套方案共用（它本身就是"状态信号"，不该跟着背景变）。
-    /// 黄=别动鼠标键盘，绿=可以接手；黑字压在亮底上约 13:1。
-    /// 色带上的字（底色与它的透明度由 Theme 按环境算）。
+    // 控制权色带上的字：黄底（别动鼠标键盘）与绿底（可以接手）都是黑字。
+    // 色带本身色相固定、明度按环境反解、不透明度钉在 0.55 —— 见 Theme.banner。
     static let alertRunFg = NSColor(calibratedWhite: 0.06, alpha: 1)
     static let alertDoneFg = NSColor(calibratedWhite: 0.06, alpha: 1)
 
@@ -115,13 +105,12 @@ private enum Look {
 }
 
 
-/// 一整套视觉参数：颜色 + 四个由环境算出来的透明度。
+/// 一整套视觉参数：颜色 + 面板底的不透明度（由环境反解，见 `Theme.palette(for:)`）。
 struct Palette {
     let panelFill: NSColor
     let panelBorder: NSColor
     let primary: NSColor
     let secondary: NSColor
-    let textPlate: NSColor
     let alertRunBg: NSColor
     let alertDoneBg: NSColor
     let stateOk: NSColor
@@ -132,36 +121,31 @@ struct Palette {
 
 /// 变色龙：**颜色和透明度全部由"面板将要盖住的那块区域有多亮"算出来**，没有第二套预设。
 ///
-/// 两条要求互相拉扯 —— 面板越透，被挡住的东西越看得清；可面板里的字就越没着落。所以把它们分给不同的层：
-///   · **面板底尽量透**（`fillAlpha = 0.10`）—— 直接服务于"被遮挡的区域也看得清"；
-///   · **文字的衬底反解到刚好够读**（`solveAlpha`）—— 服务于"面板内的信息不费力"。
-/// 文字自带衬底之后，面板底只剩"整体感"这点职责，于是可以放心压到很透。
+/// 两条要求互相拉扯，而且是**物理上**的：面板里的字要读得出来，被挡住的东西也要看得见 ——
+/// 但包住面板文字的像素，同时就是遮住后方内容的像素，是同一批像素。所以这从来不是审美选择，
+/// 只能在**空间上**、或者**在不透明度上**分配。
 ///
-/// 底板**逐行**给，只包住文字本身 —— 这是空间上的取舍，不是审美选择：包住文字的像素，同时就是
-/// 遮住后方文字的像素，两者是同一批像素。所以只能在**空间上**分配：文字处够实（够 AAA），其余处一律
-/// 透明（后方内容照旧可见）。块级底板试过，读起来更连贯，但连行距一起盖住，后方那一整片就没了 —— 退回逐行。
+/// 两条路都走过，都留下了实测结论：
+///   · **逐行底板**（文字处够实、其余处全透）：读起来连贯，但把行距一起盖住，后方那一整片就没了 ——
+///     用户否掉（"块级底板的被遮挡区域后方的文字完全看不到了"），底板整个删除。
+///   · **面板底尽量透**（0.10 / 0.20 / 0.35 都试过）：密集文字背景上各会漏 1~3 行背景文字透上来，
+///     而且漏的总是**刚打出来的内容** —— SCK 采样有 100~300ms 延迟，底图追不上正在被打印的字。
 ///
-/// 另一件事：底板**必须够实**。第一版解出来只有 0.72，透下来的内容在笔画间形成干扰，轻字重的小字最吃亏。
+/// 结论是"接近全透"在高对比底层上不成立：面板压在铺满整屏的黑底白字（~15:1）上时，
+/// 要真挡住得实到 0.8 以上，那就等于不透明了。于是取 **0.50** 作下限（用户拍板）：
+/// 普通背景上面板文字早已远超 AAA，被遮挡区域仍看得出明暗与形状。
+///
+/// 底图（面板位置的一份模糊快照）负责把残余的背景文字化成柔和的光斑 —— 它是这 0.50 之外的另一半手段。
 enum Theme {
-    /// 面板底的不透明度：只留一点点，够暗示"这是一块面板"就行。
-    /// 它是**唯一会成片盖住被测对象**的东西，所以压到最低 —— 背景由底图（模糊快照）压平。
-    /// 0.10 试过：观测工具在同一块密集文字背景上量到 3 行背景文字透上来（都是刚打出来的聊天内容），
-    /// 所以这一层仍然要留一点 —— 底图能压平静态背景，但它是 2 秒前的快照，追不上正在变化的区域。
-    /// 0.10 / 0.20 都试过：密集文字背景上各会漏 1 行，而且漏的总是**背景上刚打出来的内容** ——
-    /// SCK 采样有 100~300ms 延迟，追不上正在被打印的字，这是采样式底图的固有代价。
-    /// 0.35 是这几轮里唯一实测 0 漏的值。
     /// 面板底的目标亮度：让面板**离开中灰**。浅面板要够亮、深面板要够暗，
     /// 否则不管配深字还是白字都压不住（实测：终端里密布文字时平均亮度被抬到 0.45，
-    /// 固定 0.35 的不透明度只把面板提到 0.64，深字只有 4.0:1）。
+    /// 固定不透明度只把面板提到 0.64，深字只有 4.0:1）。
     static let lightPanelTarget: CGFloat = 0.72
     static let darkPanelTarget: CGFloat = 0.25
-    // 目标一律写成**对比度**（WCAG 风格：(亮+0.05)/(暗+0.05)），不是"亮度差" ——
-    // 这两者差得很远：0.6 的亮度差换算过来只有 ~1.6:1。
-    // 目标按 **AAA**（18pt 属大字号，AAA 要 7:1）再**留一档余量**取 9 ——
-    // 纸面 7:1 的东西在屏幕上量出来只有 6.6~6.8（中文笔画细，抗锯齿把实测亮度抬高了）。
-    // 留余量顺带把衬底做得更实，透下来内容对它的干扰也更小。
-    static let primaryContrast: CGFloat = 10     // 标题 / 步骤名 / 结论
-    static let secondaryContrast: CGFloat = 12   // 期待 / 实际 / 元信息（实测比目标低一档，再留余量）
+    // **不复用那套"解到刚好 N:1"的对比度目标** —— 底板删掉之后它就没有作用对象了（踩过：
+    // 把目标从 9 提到 12，实测仍是 4.1:1，因为解的是底板的不透明度，而底板已经不存在）。
+    // 两级灰现在直接取极端值（见 palette）。教训记在这儿：纸面 7:1 的东西在屏幕上量出来只有
+    // 6.6~6.8 —— 中文笔画细、抗锯齿把实测亮度抬高了，所以"刚好 7:1"的方案实测永远不够。
     /// 色带上黑字的对比目标。这里**故意只取 AAA 对大字号的门槛（4.5）**，不跟着文字一起上 9 ——
     /// 黄底为了 9:1 得压到亮度 0.94，而黄色本身只有 0.77，解出来的不透明度会超过 1（被夹到 0.98，
     /// 成了一条不透光的色纸，把后面的文字全挡掉）。取 4.5 时解出来正好是半透明，后面的字还能看见。
@@ -204,20 +188,20 @@ enum Theme {
     }
 
     static func palette(for backdrop: CGFloat) -> Palette {
-        // 关键在方向：面板与背景**同向**，不是相反 —— 浅背景配更浅的面板 + 深字，
-        // 深背景配更深的面板 + 白字。方向对了以后，0.10 的不透明度就足以把对比推过 AAA，
-        // 于是不需要任何"文字底板"：面板几乎全透，后方内容照旧看得见。
-        // （反着来才需要不透明的底板去救 —— 那正是"遮挡太重"的来源。）
+        // 关键在方向：面板与背景**同向**，不是相反 —— 浅背景配更亮的面板 + 深字，
+        // 深背景配更暗的面板 + 白字。方向对了才轮到对比度；方向反了只能靠加不透明度去救，
+        // 那正是"遮挡太重"的来源。
         let lightPanel = backdrop > 0.35
         let fillBase = lightPanel ? NSColor.white : NSColor(calibratedWhite: 0.02, alpha: 1)
-        // 不透明度由"要把面板提到/压到目标的亮度"反解 —— 和配色一样是算出来的，不是常量：
-        // 背景已经在两端时它自然落到下限（面板几乎全透），背景落在中灰时才提上去把面板推离中灰。
+        // 不透明度由"要把面板提到/压到目标的亮度"反解 —— 和配色一样是算出来的，不是常量。
+        // 背景落在中灰时它提上去，把面板推离中灰；背景已经在两端时它落到 0.50 的下限（用户定的取舍）。
         let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
                                    wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
 
         let primary = lightPanel ? NSColor(calibratedWhite: 0.06, alpha: 1) : NSColor.white
-        // 没有底板之后，两级的对比只能靠**颜色本身**拉开 —— secondaryContrast 那类目标解的是底板的不透明度，
-        // 底板没了它们就不起作用（踩过：把目标提到 12 实测仍是 4.1）。所以这里直接往极端压。
+        // 没有底板之后，两级的对比只能靠**颜色本身**拉开 —— "解到刚好 N:1"那类目标解的是
+        // **底板**的不透明度，底板没了它就没有作用对象（踩过：把目标从 9 提到 12，实测仍是 4.1:1）。
+        // 所以这里不设目标，直接往极端压。
         let secondary = lightPanel ? NSColor(calibratedWhite: 0.08, alpha: 1)
                                    : NSColor(calibratedWhite: 0.90, alpha: 1)
 
@@ -242,7 +226,6 @@ enum Theme {
             panelBorder: (lightPanel ? NSColor.black : NSColor.white).withAlphaComponent(0.16),
             primary: primary,
             secondary: secondary,
-            textPlate: NSColor.clear,
             alertRunBg: runBase,
             alertDoneBg: doneBase,
             stateOk: stateOk, stateBad: stateBad, stateRun: stateRun, stateInfo: stateInfo)
@@ -277,7 +260,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 上一次采样的面板尺寸。面板长高/缩短时底图必须重采 —— 只比亮度的话，同一背景下面板变高
     /// 不会触发重采，多出来的下半截就没有模糊覆盖（踩过）。
     private var sampledSize: NSSize = .zero
-    /// 上一次布局出来的面板高度。它一变就立刻重采底图 —— 否则要等下一个 2 秒周期，
+    /// 上一次布局出来的面板高度。它一变就立刻重采底图 —— 否则要等下一个采样周期，
     /// 那段窗口里底图是旧尺寸的（被拉伸铺满，内容与当前区域不对应）。
     private var laidOutHeight: CGFloat = -1
     private var palette: Palette { Theme.palette(for: backdrop) }
@@ -307,8 +290,8 @@ final class HUD: NSObject, NSApplicationDelegate {
         blurView.layer?.masksToBounds = true
         root.addSubview(blurView)
 
-        // 只有一层半透明白 + 内容，**不做模糊** —— 用户要的是看清下面压着什么，
-        // 模糊会把内容糊成色块，那正是"看不到被测对象"的来源。
+        // 面板底：一层半透明色，颜色与不透明度都由 backdrop 反解（见 Theme）。
+        // 它在底图之上 —— 底图把背景文字化成光斑，这一层再把残余压到"看得出形状、读不出内容"。
         containerView = NSView(frame: root.bounds)
         containerView.wantsLayer = true
         containerView.layer?.backgroundColor = palette.panelFill.cgColor
@@ -348,7 +331,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         applyPalette()
         panel.orderFrontRegardless()
-        // 显示之前先量一次（这一帧不闪），之后每 2 秒实时跟着背景走：配色与透明度都自动调。
+        // 显示之前先量一次：第一帧就是对的，不闪。
         refreshTheme()
         // 0.7 秒：底图是"面板下方此刻的样子"，周期越短越追得上正在变化的背景。
         themeTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
@@ -464,7 +447,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         exportFrame(screen: screen)
 
-        // 面板高度变了：立刻重采底图，别等 2 秒周期，否则这段时间底图与面板区域不对应。
+        // 面板高度变了：立刻重采底图，别等下一个周期，否则这段时间底图与面板区域不对应。
         if abs(total - laidOutHeight) > 1 {
             laidOutHeight = total
             refreshTheme()
@@ -580,16 +563,9 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     /// 换配色：面板色直接改 layer，文字靠重画。
     private func applyPalette() {
-        FileHandle.standardError.write("testhud: blur=\(blurView.frame) img=\(blurView.image?.size ?? .zero) root=\(panel.contentView?.frame ?? .zero) panel=\(panel.frame.size)\n".data(using: .utf8)!)
-        FileHandle.standardError.write(String(format: "testhud: apply backdrop=%.3f textLum=%.2f plateAlpha=%.2f fillAlpha=%.2f\n",
-                                             backdrop, Theme.luminance(palette.primary),
-                                             palette.textPlate.alphaComponent,
-                                             palette.panelFill.alphaComponent).data(using: .utf8)!)
         containerView.layer?.backgroundColor = palette.panelFill.cgColor
         containerView.layer?.borderColor = palette.panelBorder.cgColor
         alertBand.layer?.backgroundColor = alertBackgroundNow().cgColor
-        // 块级底板：头部 / 步骤区 / 结论各铺一块连续的底（含块内行距），读起来是一块信息，
-        // 而不是一行一条的横条码。面板底仍然只有 0.10，三块之间的间距也照旧透明。
         // 逼 render() 重画文字。注意光把 fingerprint 清掉还不够：attributedStringValue 的**文字内容**
         // 没变、只有颜色变了时，AppKit 可能判定"没变化"而不重绘（踩过 —— 面板底换了、字还是旧颜色）。
         // 所以再显式 needsDisplay 一次。
