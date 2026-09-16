@@ -70,7 +70,16 @@ Optional row config in your profile's `cordis.patch.yml` overrides the plugin ro
   config:
     announceToAgent: true     # inject the short "report long tests on screen" convention into every session
     defaultAnchor: auto       # auto | top-left | top-right | bottom-left | bottom-right
+    topInset: 155             # how far the top anchors drop below the screen top, in points
 ```
+
+`topInset` exists because the panel usually floats **over a browser**: the top ~150 pt of the screen are the tab strip,
+the address bar and the bookmarks bar, and a panel there would cover them. The default (155) starts the panel just
+below that chrome — level with the page's own header. Set it to `0` to get the old behaviour (a 14 pt screen margin),
+or to whatever puts the panel where you want it. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
+
+The panel background is a 44%-opaque near-black (`Look.bgAlpha` / `Look.bgWhite` in `hud/testhud.swift`) — dark enough
+for white text to read, light enough to see what is underneath. Both are one-line edits if you want it different.
 
 ## Requirements
 

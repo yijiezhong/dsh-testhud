@@ -1,18 +1,20 @@
 // DSH 自动测试的屏幕浮层：把"正在测什么、期待什么、实际什么、跑到哪一步、跑了多久，
 // 以及**现在能不能动鼠标键盘**"直接画在**被测界面之上**。
 //
-// 用法：testhud <进度文件.json> [锚点]
+// 用法：testhud <进度文件.json> [锚点] [顶部让出高度]
 //   锚点：auto（默认，自动挑最不挡的一个角）| top-left | top-right | bottom-left | bottom-right
+//   顶部让出高度：上边两个角再往下让这么多点，用来躲开浏览器自己的标签栏/地址栏/收藏栏（默认 150）
 //
 // 四条布局约定（按用户要求）：
 //   · **位置**：尽量放空白处 —— 用系统窗口列表算四个角与最前窗口的遮挡面积，取最小的那个，
-//     所以它会躲开被测窗口；也可以用锚点参数强制指定。
+//     所以它会躲开被测窗口；也可以用锚点参数强制指定。上边两个角再让开 `顶部让出高度`，
+//     免得盖住浏览器上方的工具栏、书签栏。
 //   · **大小**：随内容增减（步骤多了长高、少了缩回），到上限（屏幕可见高度的 62%）为止。
 //   · **滚动**：只有步骤区滚动，**头部固定**（标题/状态/测试对象/控制权提示/计时）；
 //     新步骤进来自动滚到底，看历史往上滚。
-//   · **透明度**：面板底色 0.58，压得住背景但不挡视线；鼠标穿透，永远不影响操作。
+//   · **透明度**：面板底色 0.44，压得住背景但不挡视线；鼠标穿透，永远不影响操作。
 //
-// 进度文件由 `tools/testhud.sh` 写（bash + python3 拼 JSON，不引任何依赖）。
+// 进度文件 schema 见插件 README（`lib/hud.js` 与 `bin/testhud.js` 都写它）。
 import AppKit
 import Foundation
 
@@ -38,6 +40,9 @@ let progressPath = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : NSHomeDirectory() + "/.dsh/test-progress.json"
 let anchorArg = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "auto"
+/// 顶部让出的高度（点）：浮层顶边从这里往下开始，用来躲开浏览器自己的标签栏/地址栏/收藏栏。
+/// 由插件/CLI 传进来（默认 150），0 表示像以前一样只留 14 点边距。
+let topInsetArg = CommandLine.arguments.count > 3 ? (Double(CommandLine.arguments[3]) ?? 0) : 0
 
 // MARK: - 尺寸与样式
 
@@ -46,7 +51,8 @@ private enum Look {
     static let inset: CGFloat = 14              // 面板内边距
     static let screenMargin: CGFloat = 14       // 离屏幕边缘
     static let maxHeightRatio: CGFloat = 0.62   // 最多占屏幕可见高度的 62%
-    static let bgAlpha: CGFloat = 0.58          // 用户要求"浅一点"
+    static let bgAlpha: CGFloat = 0.44          // 用户要求"再浅一点"（压得住背景但不挡视线）
+    static let bgWhite: CGFloat = 0.10          // 底色比纯黑浅一点
     static let cornerRadius: CGFloat = 12
 
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
@@ -95,7 +101,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: Look.width, height: 96))
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.07, alpha: Look.bgAlpha).cgColor
+        container.layer?.backgroundColor = NSColor(calibratedWhite: Look.bgWhite, alpha: Look.bgAlpha).cgColor
         container.layer?.cornerRadius = Look.cornerRadius
         container.layer?.borderWidth = 1
         container.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.18).cgColor
@@ -168,7 +174,8 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 按内容算高度并摆好三块：头部固定、步骤区滚动、页脚固定；高度变化时**顶边不动**
     private func layout(head: NSAttributedString, body: NSAttributedString, foot: NSAttributedString) {
         guard let screen = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
-        let maxHeight = screen.height * Look.maxHeightRatio
+        let topInset = max(0, topInsetArg)
+        let maxHeight = min(screen.height * Look.maxHeightRatio, screen.height - topInset - Look.screenMargin)
         let innerWidth = Look.width - Look.inset * 2
 
         func height(_ s: NSAttributedString, _ w: CGFloat) -> CGFloat {
@@ -288,9 +295,11 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     private func candidates(size: NSSize, on screen: NSRect) -> [(name: String, origin: NSPoint)] {
         let m = Look.screenMargin
+        // 上边两个角再往下让 topInset，躲开浏览器自己的标签栏/地址栏/收藏栏
+        let top = max(m, topInsetArg)
         return [
-            ("top-left",     NSPoint(x: screen.minX + m, y: screen.maxY - size.height - m)),
-            ("top-right",    NSPoint(x: screen.maxX - size.width - m, y: screen.maxY - size.height - m)),
+            ("top-left",     NSPoint(x: screen.minX + m, y: screen.maxY - size.height - top)),
+            ("top-right",    NSPoint(x: screen.maxX - size.width - m, y: screen.maxY - size.height - top)),
             ("bottom-left",  NSPoint(x: screen.minX + m, y: screen.minY + m)),
             ("bottom-right", NSPoint(x: screen.maxX - size.width - m, y: screen.minY + m)),
         ]

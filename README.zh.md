@@ -66,7 +66,15 @@ testhud status
   config:
     announceToAgent: true     # 是否给每个 session 注入"长测试要报进展"的约定
     defaultAnchor: auto       # auto | top-left | top-right | bottom-left | bottom-right
+    topInset: 155             # 上边两个角从屏幕顶部往下让出多少点
 ```
+
+`topInset` 是因为浮层通常**压在浏览器上**：屏幕最上面那 ~150 点是人家的标签栏、地址栏、收藏栏，
+浮层贴在最上面会把这些盖住。默认 155 让浮层从浏览器 chrome 之下开始，与页面自己的头部齐平；
+填 `0` 就是老行为（只留 14 点边距）。命令行可用环境变量 `DSH_TESTHUD_TOP_INSET` 覆盖。
+
+浮层底色是 44% 不透明的近黑（`hud/testhud.swift` 里的 `Look.bgAlpha` / `Look.bgWhite`）——
+白字压得住，下面的东西也看得见；想改就是一行。
 
 ## 依赖
 
