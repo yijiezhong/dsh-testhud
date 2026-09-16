@@ -25,6 +25,11 @@ This panel answers exactly that, on screen, without stealing focus:
   and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
 - **Move it by hand**: grab the top colour band and drag to put the panel wherever suits you. That band is the only part
   that is not click-through — it is the drag handle; everything below it still passes the mouse straight through.
+- **Three traffic lights at the band's left end**, the macOS three: **red** closes the panel, **yellow** collapses it
+  down to just the band (click again to restore), **green** expands it to the maximum height (click again to go back
+  to the content height). So it can be put away or enlarged with the mouse, without going back to the tool. Their
+  colours deliberately stay out of the chameleon algorithm — red/amber/green are what people recognise, and a dot
+  that recolours itself with the backdrop stops being recognisable.
 
 ## Install
 
@@ -252,6 +257,15 @@ extreme pixels. And `belongs()`'s 3-gram rule can claim a background line that m
 (a path containing `dsh-testhud`), which is why anything measuring under 1.5:1 is now reported as an out-of-frame
 artifact instead of a contrast figure. Text and its ground being nearly the same colour does not happen in reality.
 
+The simplest mistake cost the most. The three dots at the band's left end went through eight rounds of "still not
+rendering" before it turned out they had been on screen the whole time: the scan was handed `band height / 2`
+(20 px = 10 pt) while the dots' centres sit at 20.5 pt = **41 px**, so every scan passed 10 points above them.
+Looking at a screenshot settled it immediately.
+
+So: **when several rounds in a row report "nothing changed", suspect the instrument before changing the subject
+again.** A pixel-identical result across rounds, or several genuinely different implementations all "failing" the
+same way, are signs that the instrument is broken — not the thing being measured.
+
 ### Test on a backdrop that contains text
 
 Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid
@@ -276,6 +290,9 @@ process the host resolves it. It is not part of the published package.
 lib/index.js      Cordis host plugin: registers the test_hud tool + a system-prompt section
 lib/hud.js        progress file (~/.dsh/test-progress.json) and the panel process (build / start / stop)
 hud/testhud.swift the panel itself: borderless NSPanel at .screenSaver level, ignoresMouseEvents, polls the file every 0.4s
+                  (plus a second, transparent window covering only the colour band — the panel is click-through as a whole,
+                   so band dragging and the three dots are handled there: ignoresMouseEvents is per-window, one window
+                   cannot be "click-through here, solid there")
 bin/testhud.js    CLI over the same core
 ```
 
@@ -293,6 +310,12 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 - The panel is click-through by design, with **one exception: the top colour band**, which is the drag handle — without
   it there would be no way to move the panel by hand. So a mouse landing on the band grips the panel instead of the app
   underneath; `stop` / `done` make it go away.
+- **The band's left 78 points are reserved for the three dots**; the band text starts after them, so a long status
+  line cannot run into the dots.
+- Dragging leaves the panel **wherever you put it** — `layout()` only keeps the top edge fixed when the height
+  changes, it never snaps back to a candidate position — until the panel process restarts. The drag is clamped to the
+  visible area of the screen the mouse is on: otherwise the panel can be dropped into the dead space between two
+  displays, where nothing is visible and it can never be clicked again.
 - On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the
   top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
 - **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it falls
