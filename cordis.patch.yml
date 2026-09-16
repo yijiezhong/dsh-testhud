@@ -1,0 +1,12 @@
+# dsh-testhud bundle patch —— 往 profile 根组合里插一行宿主插件。
+#
+# 这一行让 **每个 session** 都拿到 `test_hud` 工具（以及系统提示里那段"跑长测试要报进展"的约定）。
+# 必须包在 `insert:` 里：不带 `insert:` 的 `- id: x` 会被 loader 读成"改一行已存在的配置"，
+# 找不到就静默跳过（DSH 自己报 `patch: entry "x" not found`），插件不会挂载。
+- insert:
+    - id: testhud
+      name: dsh-testhud
+      # 可选配置（默认值见 lib/index.js）：
+      # config:
+      #   announceToAgent: true        # 是否往系统提示注入"长测试要报进展"的约定
+      #   defaultAnchor: auto          # 浮层默认贴哪一角

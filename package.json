@@ -1,0 +1,52 @@
+{
+  "name": "dsh-testhud",
+  "version": "0.1.0",
+  "description": "On-screen progress HUD for automated tests in DeepSeek Harness: what is being tested, each step's expectation vs actual result, elapsed time, and whether the waiting human may take back the mouse and keyboard.",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "test",
+    "hud",
+    "overlay",
+    "automation",
+    "macos"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "testhud": "bin/testhud.js"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "hud",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yijiezhong/dsh-testhud.git"
+  },
+  "homepage": "https://github.com/yijiezhong/dsh-testhud",
+  "bugs": {
+    "url": "https://github.com/yijiezhong/dsh-testhud/issues"
+  }
+}
