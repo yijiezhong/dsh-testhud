@@ -395,6 +395,22 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 色带的拖拽把手（见 `DragHandle`）。它是**独立的一个小窗口** —— 面板本身必须整体保持
     /// 鼠标穿透，那种"只有色带能抓"的效果没法用一个窗口做到（`ignoresMouseEvents` 是窗口级的）。
     private var dragHandle: DragHandle!
+    /// 色带左端那三个圆点的**命中区**（红关闭 / 黄折叠 / 绿缩放），住在把手窗口里。
+    /// 它自己**不负责显示** —— 显示见 `bandDots`。
+    private var lights: TrafficLights!
+    /// 三个圆点的**显示**，画在主面板的色带里。
+    ///
+    /// 为什么不跟命中区合成同一个视图：把手窗口是一层**透明**的窗口，里面本来就没有画面 ——
+    /// 它存在的唯一目的是接鼠标（主面板整体鼠标穿透）。所以让两边各司其职：显示画在主面板的
+    /// 色带上，命中区留在必须能接鼠标的地方。
+    ///
+    /// 圆点必须用 `addSubview(positioned: .above)` 提到最上层：色带和几个文字字段都是后加进
+    /// `containerView` 的，不这么做会被色带整个盖住（位置、颜色全对，就是看不见）。
+    private var bandDots: [NSTextField] = []
+    /// 黄点：折叠成只剩色带一条，再点一下原样回来。
+    private var collapsed = false
+    /// 绿点：放大到高度上限、把滚动区撑满，再点回到按内容算的高度。
+    private var zoomed = false
     /// 当前用哪套配色。默认按"浅背景"起手，第一次采样之后就会纠正。
     /// 最后一次量到的背景亮度 —— 整套配色（颜色 + 四个透明度）都由它推出来。
     /// 最后一次量到的背景亮度。-1 是"还没量过"的哨兵 —— 用 0.95 之类当初始值会让第一次采样
@@ -456,6 +472,24 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         alertBand = NSView(frame: .zero)
         alertBand.wantsLayer = true
+        // 三个圆点画在面板顶层（和 `alertField` 同一层），位置由 `layout()` 摆，
+        // 点击由把手窗口那份命中区负责。
+        //
+        // **用 NSTextField 画实心圆字符，不是图省事。** 一共换过三种画法 —— `draw(_:)`、
+        // `NSView + wantsLayer + layer.backgroundColor`、直接往色带 layer 上加 `CALayer` ——
+        // 三种都把 frame 和 layer 验证到了"完全正确"（日志里 bounds、frame、layer 非空、
+        // 窗口 onscreen=1、在最前，全对），屏幕上就是什么都没有。而 `alertField` 这类文本控件
+        // 在这个面板里始终显示正常，所以走这条已知能通的路。
+        for color in TrafficLights.colors {
+            let dot = NSTextField(labelWithString: "●")
+            dot.font = .systemFont(ofSize: 12)
+            dot.textColor = color
+            dot.alignment = .center
+            dot.isBordered = false
+            dot.drawsBackground = false
+            containerView.addSubview(dot)
+            bandDots.append(dot)
+        }
         alertField = makeField()
         headerField = makeField()
         footerField = makeField()
@@ -498,6 +532,18 @@ final class HUD: NSObject, NSApplicationDelegate {
         // （第一版就踩了这个，查窗口列表和权限花了一轮。）
         let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: Look.width, height: 40))
         grip.host = panel
+        // 整条链都上 layer：`dots` 是 layer 子视图，而"layer 子视图挂在普通父视图下"这种混合
+        // 模式在某些情况下不渲染。与其赌它会自动向上冒泡，不如自己把链上每个视图都设成 layer-backed。
+        grip.wantsLayer = true
+        // 三个圆点画在把手里面：主面板整体鼠标穿透，整块浮层只有把手这一条能接鼠标。
+        // 做成 `grip` 的子视图，点击天然被它们吃掉，不会漏给底下的拖拽逻辑。
+        lights = TrafficLights(frame: grip.bounds)
+        lights.wantsLayer = true
+        lights.onLamp = { [weak self] lamp in self?.handle(lamp) }
+        grip.addSubview(lights)
+        // 尺寸交给 `DragGrip.layout()` 同步，不用 autoresizingMask —— 那是从 0×0 起步做等比缩放，
+        // 0 乘任何数还是 0，圆点会一直看不见。
+        grip.lights = lights
         dragHandle.contentView = grip
         dragHandle.orderFrontRegardless()
         // 显示之前先量一次：第一帧就是对的，不闪。
@@ -571,6 +617,28 @@ final class HUD: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 三个圆点的动作。
+    private func handle(_ lamp: TrafficLights.Lamp) {
+        switch lamp {
+        case .close:
+            // 红点：面板就此退出。不是不可恢复 —— 任何 session 再调一次 `test_hud` 它就会回来。
+            NSApp.terminate(nil)
+        case .minimize:
+            collapsed.toggle()
+            relayout()
+        case .zoom:
+            zoomed.toggle()
+            relayout()
+        }
+    }
+
+    /// 点了圆点要**立刻**重排。不能只调 `render()` 就完事：它先比内容指纹，而内容和上一次
+    /// 一模一样，指纹没变就不会重排 —— 点下去像没反应。清掉指纹是让这条路径绕开那次比较。
+    private func relayout() {
+        lastFingerprint = ""
+        render()
+    }
+
     /// 按内容算高度并摆好四块：顶部色带通栏、头部固定、步骤区滚动、页脚固定；高度变化时**顶边不动**。
     private func layout(alert: NSAttributedString, head: NSAttributedString, body: NSAttributedString, foot: NSAttributedString) {
         guard let screen = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
@@ -586,15 +654,20 @@ final class HUD: NSObject, NSApplicationDelegate {
             return ceil(s.boundingRect(with: NSSize(width: w, height: .greatestFiniteMagnitude),
                                        options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
         }
-        let alertTextH = height(alert, innerWidth)
+        // 色带左边要放三个圆点，文字得从它们右边开始 —— 量高度时就得按缩窄后的宽度算，
+        // 否则文字按全宽排好版、再塞进窄框里又会折行，高度和实测对不上。
+        let alertTextH = height(alert, innerWidth - TrafficLights.reservedWidth)
         let alertH = alertTextH + Look.bandPad * 2        // 色带：文字上下各留 bandPad
         let headH = height(head, innerWidth)
         let bodyH = height(body, innerWidth - 10)
         let footH = height(foot, innerWidth)
 
         let wanted = alertH + gap + headH + gap + bodyH + (footH > 0 ? gap + footH : 0) + Look.inset
-        let total = min(max(wanted, 96), maxHeight)
-        let stepsH = max(28, total - alertH - gap - headH - gap - (footH > 0 ? gap + footH : 0) - Look.inset)
+        let natural = min(max(wanted, 96), maxHeight)
+        // 黄点折叠：只留一条色带。绿点放大：直接取高度上限，把滚动区撑满（步骤多时能一眼看全）。
+        let total = collapsed ? alertH : (zoomed ? maxHeight : natural)
+        let stepsH = collapsed ? 0
+            : max(28, total - alertH - gap - headH - gap - (footH > 0 ? gap + footH : 0) - Look.inset)
 
         let oldTop = panel.frame.maxY
         panel.setFrame(NSRect(x: panel.frame.origin.x, y: panel.frame.origin.y,
@@ -605,14 +678,35 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         // 色带通栏；文字在自己的高度里居中 —— 不再靠段落间距去"顶"，那是顶不下来的。
         alertBand.frame = NSRect(x: 0, y: total - alertH, width: Look.width, height: alertH)
-        alertField.frame = NSRect(x: 0, y: total - alertH + Look.bandPad,
-                                  width: Look.width, height: alertTextH)
+        // 圆点在色带里垂直居中、从左边依次排开。色带高度会随文字折行变，所以每次布局都得重摆。
+        let dotStep = TrafficLights.diameter + TrafficLights.gap
+        // **必须把圆点提到最上层。** 色带和四个文字视图都是后加进 `containerView` 的，
+        // 默认盖在圆点上面 —— 那样圆点位置、颜色、frame 全对，就是被色带整个挡住
+        // （插桩日志：`n=3 f0=(12.0, 131.5, 16.0, 16.0) hidden=false alpha=1.0`，一项不差）。
+        for dot in bandDots {
+            containerView.addSubview(dot, positioned: .above, relativeTo: nil)
+        }
+        // 框给 16 点、比圆本身（12）大一圈：`NSTextField` 拿 12 点高的框去装 11pt 的字符，
+        // 会把字垂直裁掉大半 —— 看上去和"根本没画出来"一模一样（踩过）。
+        let dotBox: CGFloat = 16
+        for (i, dot) in bandDots.enumerated() {
+            dot.frame = NSRect(x: TrafficLights.leading + CGFloat(i) * dotStep
+                                 - (dotBox - TrafficLights.diameter) / 2,
+                               y: total - alertH + (alertH - dotBox) / 2,
+                               width: dotBox, height: dotBox)
+        }
+        alertField.frame = NSRect(x: TrafficLights.reservedWidth, y: total - alertH + Look.bandPad,
+                                  width: Look.width - TrafficLights.reservedWidth, height: alertTextH)
         headerField.frame = NSRect(x: Look.inset, y: total - alertH - gap - headH,
                                    width: innerWidth, height: headH)
         stepsScroll.frame = NSRect(x: Look.inset, y: Look.inset + (footH > 0 ? footH + gap : 0),
                                    width: innerWidth, height: stepsH)
         stepsField.frame = NSRect(x: 0, y: 0, width: innerWidth - 10, height: max(bodyH, stepsH))
         footerField.frame = NSRect(x: Look.inset, y: Look.inset, width: innerWidth, height: footH)
+        // 折起来的时候把内容藏掉：它们的 frame 会落到面板外面，留着只会在色带边缘漏出半行字。
+        for view in [headerField as NSView?, stepsScroll as NSView?, footerField as NSView?] {
+            view?.isHidden = collapsed
+        }
 
         // 导出几何时用的是**全屏**顶边，不是这里的 `screen` —— 那是 visibleFrame，少了菜单栏那 30 点。
         // 面板的 NS 坐标以全屏为基准，拿 visibleFrame 去换算，观测工具就会在比面板实际位置
@@ -637,7 +731,11 @@ final class HUD: NSObject, NSApplicationDelegate {
         if let handle = dragHandle {
             let band = NSRect(x: panel.frame.minX, y: panel.frame.maxY - alertH,
                               width: Look.width, height: max(0, alertH))
-            if handle.frame != band { handle.setFrame(band, display: false) }
+            // `display: true` 不能省。这个窗口是 0 尺寸创建的，尺寸改了却不重绘的话，
+            // 屏幕上不会出现任何东西 —— 里面的层（三个圆点）也就一直空白（踩过）。
+            if handle.frame != band { handle.setFrame(band, display: true) }
+            // 圆点的尺寸**不在这里**同步 —— 见 `DragGrip.resizeSubviews()`。这段代码只在面板内容
+            // 变化时才跑，拿它当同步点会让圆点一直停在 .zero（踩过）。
         }
         panel.invalidateShadow()
     }
@@ -1109,6 +1207,25 @@ final class DragGrip: NSView {
     /// 被拖动的主面板。弱引用：把手是面板的附属物，面板没了它不该继续留着。
     weak var host: NSWindow?
 
+    /// 色带左端那三个圆点，跟着把手一起调整尺寸。
+    var lights: TrafficLights?
+
+    /// 圆点的尺寸**只能在这里同步**，而且**必须用 `resizeSubviews` 而不是 `layout()`**。
+    ///
+    /// 这一行试错了三次才落到对的地方：
+    /// 1. 放进 `HUD.layout()` —— 那段代码只在面板**内容变化**时才跑，而把手窗口是启动那一次
+    ///    （圆点还没建）定好尺寸的，之后再没人调它；
+    /// 2. 改用自己的 `layout()` —— 照样不行：`layout()` 是 **Auto Layout 的钩子**，这棵树里
+    ///    一个约束都没有，AppKit 压根不会主动调它（日志坐实：只在启动那两次被调过，之后
+    ///    把手窗口改了好几次尺寸，它一动不动）；
+    /// 3. `resizeSubviews(withOldSize:)` 才是 frame-based 视图在尺寸变化时一定会走的钩子。
+    ///
+    /// 症状自始至终一样：圆点的 frame 停在 `.zero` —— 视图在、点击也有效、就是看不见。
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        lights?.frame = bounds
+    }
+
     /// **这个必须返回 true，否则一次都拖不动。**
     /// app 是 `.accessory`、窗口是 `.nonactivatingPanel` —— 它永远不会成为 key window，
     /// 于是每一次点击在 AppKit 眼里都是 "first mouse"：默认会被吞掉，只用于"激活"一个
@@ -1133,6 +1250,18 @@ final class DragGrip: NSView {
         dragLog("mouseDown global=\(lastPoint)")
     }
 
+    /// 把窗口原点夹进**鼠标所在那块屏**的可见范围 —— 按鼠标选屏，跨屏拖动就自然成立。
+    ///
+    /// 夹的是整块窗口，不留"露一条缝"的花活：边缘只露一条缝的浮层和丢了没区别，用户照样找不到。
+    /// `max(...)` 那一层是给"窗口比屏幕还高"这种极端情况兜底的，免得夹出个上小下大的空区间。
+    private func clamp(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        guard let vis = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+                         ?? NSScreen.main)?.visibleFrame else { return origin }
+        return NSPoint(
+            x: min(max(origin.x, vis.minX), max(vis.minX, vis.maxX - size.width)),
+            y: min(max(origin.y, vis.minY), max(vis.minY, vis.maxY - size.height)))
+    }
+
     override func mouseUp(with event: NSEvent) {
         lastPoint = .zero
     }
@@ -1146,17 +1275,138 @@ final class DragGrip: NSView {
             lastPoint = .zero
             return
         }
+        // 没有配对的 `mouseDown` 就不该算位移：点在圆点上时 down 被圆点吃掉了，事件却仍会上溯到
+        // 这里，而此时 `lastPoint` 还是 `.zero` —— 算出来的"位移"等于鼠标的**绝对坐标**，面板会瞬移。
+        guard lastPoint != .zero else { return }
         let now = NSEvent.mouseLocation
         let dx = now.x - lastPoint.x, dy = now.y - lastPoint.y
         lastPoint = now
         guard let host = host, let handle = window else { return }
         // 相对拖动：面板跟着鼠标的位移走，不需要记"抓在哪个点"。
-        host.setFrameOrigin(NSPoint(x: host.frame.origin.x + dx, y: host.frame.origin.y + dy))
+        // 但必须夹在屏幕里 —— 拖出去就再也点不到了（浮层没有 Dock 图标、没有菜单栏入口、
+        // 也不出现在 ⌘Tab 里），只能重启面板才找得回来。实测拖到过 X:1594 Y:-640 那种
+        // 两块屏之间的空白地带，屏幕上什么都看不见。
+        host.setFrameOrigin(clamp(NSPoint(x: host.frame.origin.x + dx, y: host.frame.origin.y + dy),
+                                  size: host.frame.size))
         // 把手当场跟上，不等下一次 `layout()`（最多 0.4 秒后）：否则拖动时把手会明显"掉队"，
         // 看起来像色带没跟着面板走。（拖拽期间事件是锁定在这个 view 上的，鼠标跑出把手也不会断。）
         handle.setFrameOrigin(NSPoint(x: host.frame.minX, y: host.frame.maxY - handle.frame.height))
         dragLog("dragged d=(\(dx),\(dy)) host=\(host.frame.origin)")
     }
+}
+
+/// 色带左端的三个圆点 —— 红关闭 / 黄折叠 / 绿缩放，配色和尺寸照 macOS 自己的来。
+///
+/// 为什么画在把手窗口里（见 `DragHandle`）：主面板整体鼠标穿透，整块浮层只有把手那一条能接鼠标，
+/// 圆点必须住在它里面。做成 `DragGrip` 的子视图，点击天然被吃掉，不会漏给底下的拖拽逻辑。
+///
+/// **这三个颜色不参与变色龙算法。** 面板上其它文字都是按环境算出来的，这三颗不行：
+/// 用户认的就是"红黄绿 = 关掉 / 收起来 / 放大"，跟着背景变色反而认不出来。
+final class TrafficLights: NSView {
+    enum Lamp: CaseIterable { case close, minimize, zoom }
+
+    var onLamp: ((Lamp) -> Void)?
+
+    /// macOS 自己的取值：#FF5F57 / #FEBC2E / #28C840。
+    /// 不是 private —— 主面板要用同一组颜色画它那份圆点（见 `HUD.bandDots`）。
+    static let colors = [
+        NSColor(srgbRed: 1.00, green: 0.373, blue: 0.341, alpha: 1),
+        NSColor(srgbRed: 0.996, green: 0.737, blue: 0.180, alpha: 1),
+        NSColor(srgbRed: 0.157, green: 0.784, blue: 0.251, alpha: 1),
+    ]
+
+    static let diameter: CGFloat = 12
+    static let gap: CGFloat = 8
+    static let leading: CGFloat = 14
+    /// 圆点总共占掉色带左边多宽 —— 色带文字要从这里往右开始排。
+    static var reservedWidth: CGFloat { leading + diameter * 3 + gap * 2 + 12 }
+
+    /// 命中范围比圆本身大一圈：12 点的圆要精准点中太费劲，macOS 自己也放宽。
+    private static let slop: CGFloat = 4
+
+    /// 三颗圆各自是一个 layer 小视图，**不靠 `draw(_:)`**。
+    ///
+    /// 第一版是用 `draw` 画的，结果一颗都没出来（扫描色带那一行，只有面板自己的琥珀色）。
+    /// `draw` 什么时候被调用，完全交给 AppKit 的显示调度 —— 而这个视图住在一个从 `.zero`
+    /// 起步、之后又被 `setFrame(display: false)` 改过尺寸的把手窗口里，不该赌它会被调。
+    /// 换成子视图 + `cornerRadius` 之后渲染走 CALayer，只要进了视图层次就会显示。
+    private var dots: [NSView] = []
+    private static var layoutLogs = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        for _ in Self.colors {
+            let dot = NSView()
+            dot.wantsLayer = true
+            addSubview(dot)
+            dots.append(dot)
+        }
+        // 建完就摆一次。不能只等 `resizeSubviews` —— 如果这个视图一进来就已是最终尺寸，
+        // 那个钩子永远不会触发，三颗圆会一直保持 0×0。
+        layoutDots()
+    }
+
+    required init?(coder: NSCoder) { fatalError("这个视图只有代码创建一条路") }
+
+    /// 尺寸一变就重排三颗圆（把手的宽高每个周期都可能跟着面板走）。
+    /// 同样不能用 `layout()` —— 原因见 `DragGrip.resizeSubviews`：那是 Auto Layout 的钩子。
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        layoutDots()
+        if Self.layoutLogs < 3 {
+            Self.layoutLogs += 1
+            dragLog("lights.resize bounds=\(bounds) layers=\(dots.map { $0.layer != nil }) "
+                    + "bg=\(dots.first?.layer?.backgroundColor != nil) frames=\(dots.map { $0.frame })")
+        }
+    }
+
+    /// 摆位置 **并且** 每次都重设 layer 的样子。
+    ///
+    /// 颜色和圆角放在这里、而不是 init 里：视图刚 `init` 时还没进窗口，`dot.layer` 可能是 nil，
+    /// 而 `dot.layer?.backgroundColor = ...` 遇到 nil 是**静默通过**的 —— 不报错、也不生效，
+    /// 圆点于是永远透明。frame 一直是对的，只是眼睛看不见（查了三轮才落到这一行上）。
+    private func layoutDots() {
+        let step = Self.diameter + Self.gap
+        for (i, dot) in dots.enumerated() {
+            dot.frame = NSRect(x: Self.leading + CGFloat(i) * step,
+                               y: (bounds.height - Self.diameter) / 2,
+                               width: Self.diameter, height: Self.diameter)
+            dot.layer?.backgroundColor = Self.colors[i].cgColor
+            dot.layer?.cornerRadius = Self.diameter / 2
+        }
+    }
+
+    /// 第几颗圆被点到了（`local` 是本视图坐标）。
+    private func lampIndex(at local: NSPoint) -> Int? {
+        let step = Self.diameter + Self.gap
+        let cy = bounds.height / 2
+        for i in 0..<Self.colors.count {
+            let cx = Self.leading + CGFloat(i) * step + Self.diameter / 2
+            if abs(local.x - cx) <= Self.diameter / 2 + Self.slop,
+               abs(local.y - cy) <= Self.diameter / 2 + Self.slop { return i }
+        }
+        return nil
+    }
+
+    /// 只有三颗圆本身接鼠标，其余地方返回 nil —— 于是色带左端那一条**仍然拖得动**。
+    /// （本视图铺满整条色带；不这么写，左端 80 点宽的一整条就废了。）`point` 在**父视图**坐标里。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let parent = superview else { return nil }
+        return lampIndex(at: convert(point, from: parent)) != nil ? self : nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        if let i = lampIndex(at: convert(event.locationInWindow, from: nil)) {
+            onLamp?(Lamp.allCases[i])
+        }
+    }
+
+    /// 必须把 dragged 吃掉。不实现的话事件会沿响应链上溯到 `DragGrip`，而它的 `lastPoint`
+    /// 还停在 `.zero`（它的 `mouseDown` 被圆点截住了，没机会更新）—— 于是"点一下圆点"就变成
+    /// 把面板朝鼠标的绝对坐标推一下，点一次跑一次（实测 x：28 → 96 → 232）。
+    override func mouseDragged(with event: NSEvent) {}
 }
 
 let app = NSApplication.shared
