@@ -172,6 +172,12 @@ panel resizes with it.
 
 ## Development
 
+### Test on a backdrop that contains text
+
+Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid
+area (blank page, empty terminal) cannot show the failure this panel exists to avoid: its own text fighting the text
+underneath, same size and similar colour, two layers of type in one place. A clean backdrop proves nothing about it.
+
 ```sh
 # a throwaway profile, so your real one is untouched
 dsh --profile hudtest --from-default-profile headless --dump-config > /dev/null

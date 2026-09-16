@@ -155,6 +155,12 @@ bold、步骤名 semibold、期待/实际 regular。浏览器里 DSH 的正文�
 
 ## 开发自测
 
+### 背景里必须有文字
+
+采样用的背景要**真的有文字** —— 一份源码、一屏终端输出、一屏聊天记录都行。纯色区域（空白页、空终端）测不出
+这个浮层要避免的那种失败：它自己的文字和底下的文字**字号相近、颜色相近**，两层字叠在一处。干净的背景证明不了
+任何事。
+
 ```sh
 # 用一个一次性 profile 验，别动你日常那个
 dsh --profile hudtest --from-default-profile headless --dump-config > /dev/null

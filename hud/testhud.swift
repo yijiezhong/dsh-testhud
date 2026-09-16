@@ -145,14 +145,17 @@ struct Palette {
 enum Theme {
     /// 面板底的不透明度：只留一点点，够暗示"这是一块面板"就行。
     /// 它是**唯一会成片盖住被测对象**的东西，所以压到最低 —— 遮挡面积主要留给文字自己的底板。
-    static let fillAlpha: CGFloat = 0.10
+    /// 0.10 时背景文字会穿透（模糊层几何与图像都正常，但密集正文处仍能被读出），
+    /// 所以用这个**必然生效**的层兜底：它是 CALayer 的底色，不像模糊那样依赖采样链路。
+    /// 代价是遮挡从 10% 涨到 45% —— 想更透就往下调，想更干净就往上调。
+    static let fillAlpha: CGFloat = 0.45
     // 目标一律写成**对比度**（WCAG 风格：(亮+0.05)/(暗+0.05)），不是"亮度差" ——
     // 这两者差得很远：0.6 的亮度差换算过来只有 ~1.6:1。
     // 目标按 **AAA**（18pt 属大字号，AAA 要 7:1）再**留一档余量**取 9 ——
     // 纸面 7:1 的东西在屏幕上量出来只有 6.6~6.8（中文笔画细，抗锯齿把实测亮度抬高了）。
     // 留余量顺带把衬底做得更实，透下来内容对它的干扰也更小。
-    static let primaryContrast: CGFloat = 9      // 标题 / 步骤名 / 结论
-    static let secondaryContrast: CGFloat = 9    // 期待 / 实际 / 元信息
+    static let primaryContrast: CGFloat = 10     // 标题 / 步骤名 / 结论
+    static let secondaryContrast: CGFloat = 12   // 期待 / 实际 / 元信息（实测比目标低一档，再留余量）
     static let alertContrast: CGFloat = 9        // 色带上的黑字
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -184,8 +187,10 @@ enum Theme {
         let fillAlpha: CGFloat = 0.10
 
         let primary = lightPanel ? NSColor(calibratedWhite: 0.06, alpha: 1) : NSColor.white
-        let secondary = lightPanel ? NSColor(calibratedWhite: 0.16, alpha: 1)
-                                   : NSColor(calibratedWhite: 0.84, alpha: 1)
+        // 没有底板之后，两级的对比只能靠**颜色本身**拉开 —— secondaryContrast 那类目标解的是底板的不透明度，
+        // 底板没了它们就不起作用（踩过：把目标提到 12 实测仍是 4.1）。所以这里直接往极端压。
+        let secondary = lightPanel ? NSColor(calibratedWhite: 0.08, alpha: 1)
+                                   : NSColor(calibratedWhite: 0.90, alpha: 1)
 
         let runBase = NSColor(calibratedRed: 1.00, green: 0.78, blue: 0.00, alpha: 1)
         let doneBase = NSColor(calibratedRed: 0.16, green: 0.80, blue: 0.38, alpha: 1)
@@ -237,6 +242,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 最后一次量到的背景亮度。-1 是"还没量过"的哨兵 —— 用 0.95 之类当初始值会让第一次采样
     /// 因"变化不够 4%"被判为没变化，配色和底图就永远不应用（踩过）。
     private var backdrop: CGFloat = -1
+    /// 上一次采样的面板尺寸。面板长高/缩短时底图必须重采 —— 只比亮度的话，同一背景下面板变高
+    /// 不会触发重采，多出来的下半截就没有模糊覆盖（踩过）。
+    private var sampledSize: NSSize = .zero
     private var palette: Palette { Theme.palette(for: backdrop) }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -425,19 +433,23 @@ final class HUD: NSObject, NSApplicationDelegate {
         let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         let exclude = panel.windowNumber
         let previous = backdrop
+        let previousSize = sampledSize
+        let size = frame.size
 
         // 采样放**后台线程**：ScreenCaptureKit 的 async 调用和 @MainActor 会互等 ——
         // 症状是一条日志都不出、配色永远停在初始值（踩过）。采完再回主线程套用。
-        Task.detached { [rect, displayID, exclude, previous] in
+        Task.detached { [rect, displayID, exclude, previous, previousSize, size] in
             guard let (luminance, snapshot) = await Self.capturePanelArea(rect, displayID: displayID,
                                                                          excluding: exclude) else {
                 FileHandle.standardError.write("testhud: sample FAILED\n".data(using: .utf8)!); return }
             FileHandle.standardError.write(String(format: "testhud: backdrop=%.3f\n", luminance).data(using: .utf8)!)
-            // 变化小于 4% 就不重绘，免得背景稍微一动整个面板跟着抖。
-            guard abs(luminance - previous) > 0.04 else { return }
+            // 亮度变化小于 4% 且面板尺寸没变就不重绘，免得背景稍微一动整个面板跟着抖。
+            let sizeChanged = abs(size.height - previousSize.height) > 1 || abs(size.width - previousSize.width) > 1
+            guard abs(luminance - previous) > 0.04 || sizeChanged else { return }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.backdrop = luminance
+                self.sampledSize = size
                 if let snapshot { self.blurView.image = NSImage(cgImage: snapshot, size: .zero) }
                 FileHandle.standardError.write("testhud: snapshot=\(snapshot == nil ? "nil" : "ok") view=\(self.blurView.image == nil ? "empty" : "set")\n".data(using: .utf8)!)
                 self.applyPalette()
@@ -483,7 +495,17 @@ final class HUD: NSObject, NSApplicationDelegate {
             // 后方内容因此变成柔和的光斑：仍然看得出"下面有东西"，但不会和面板文字抢读。
             var blurred: CGImage?
             if let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) {
-                let ci = CIImage(cgImage: cropped).applyingGaussianBlur(sigma: 14)
+                // σ 要够大：14 时密集文字仍能辨认出字形，和面板文字抢读（截图里一眼就看出来）。
+                // 再把对比度压低 —— 背景退成"低对比的纹理"，这比提高面板不透明度更划算：
+                // 后者会增加遮挡，前者不增加。
+                let ci = CIImage(cgImage: cropped)
+                    .applyingGaussianBlur(sigma: 26)
+                    .applyingFilter("CIColorControls", parameters: [
+                        // 背景压到几乎纯色：模糊在稀疏处够用（面板内实测 stddev 0.2~6.5），
+                        // 但密集正文处仍有字形残留，与其继续猜模糊强度，不如直接把它压平 —— 零遮挡代价。
+                        kCIInputContrastKey: 0.15,
+                        kCIInputSaturationKey: 0.55,
+                    ])
                 blurred = CIContext().createCGImage(ci, from: ci.extent)
             }
             return (luminance, blurred)
@@ -495,6 +517,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     /// 换配色：面板色直接改 layer，文字靠重画。
     private func applyPalette() {
+        FileHandle.standardError.write("testhud: blur=\(blurView.frame) img=\(blurView.image?.size ?? .zero) root=\(panel.contentView?.frame ?? .zero) panel=\(panel.frame.size)\n".data(using: .utf8)!)
         FileHandle.standardError.write(String(format: "testhud: apply backdrop=%.3f textLum=%.2f plateAlpha=%.2f fillAlpha=%.2f\n",
                                              backdrop, Theme.luminance(palette.primary),
                                              palette.textPlate.alphaComponent,
