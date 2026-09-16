@@ -172,6 +172,17 @@ panel resizes with it.
 
 ## Development
 
+### Inspect, don't guess
+
+`bin/testhud-inspect.py` is the observation tool for the panel's pixels. It reads the geometry the panel itself
+exports on every layout (`~/.dsh/dsh-testhud/panel-frame.json`), crops exactly that rectangle, and reports the panel's
+internal texture plus every OCR line inside it that does **not** belong to the panel's own content.
+
+Use it instead of reasoning about panel coordinates from a screenshot. Three separate conclusions in this project were
+wrong because the panel's rectangle was inferred from OCR output while the panel's position and size are dynamic —
+each time, content from *outside* the panel (the left half of a terminal, browser tab titles) was mistaken for text
+bleeding through.
+
 ### Test on a backdrop that contains text
 
 Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid

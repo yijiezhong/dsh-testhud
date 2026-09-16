@@ -416,6 +416,8 @@ final class HUD: NSObject, NSApplicationDelegate {
         stepsField.frame = NSRect(x: 0, y: 0, width: innerWidth - 10, height: max(bodyH, stepsH))
         footerField.frame = NSRect(x: Look.inset, y: Look.inset, width: innerWidth, height: footH)
 
+        exportFrame(screen: screen)
+
         // 面板高度变了：立刻重采底图，别等 2 秒周期，否则这段时间底图与面板区域不对应。
         if abs(total - laidOutHeight) > 1 {
             laidOutHeight = total
@@ -545,6 +547,31 @@ final class HUD: NSObject, NSApplicationDelegate {
         render()
         for field in [alertField, headerField, stepsField, footerField] {
             field?.needsDisplay = true
+        }
+    }
+
+    /// 把面板的精确几何写到磁盘，供观测工具使用（`bin/testhud-inspect.py`）。
+    /// **这是为了不再猜坐标** —— 之前一系列"背景文字是否穿透"的误判，根因都是工具侧凭 OCR 反推面板范围。
+    /// 坐标系说明：这里写的是 NS 坐标（原点在左下），工具会把它换算成截图的物理像素（原点在左上）。
+    private func exportFrame(screen: NSRect) {
+        let info: [String: Any] = [
+            "x": panel.frame.minX,
+            "y": panel.frame.minY,
+            "width": panel.frame.width,
+            "height": panel.frame.height,
+            "screenWidth": screen.width,
+            "screenHeight": screen.height,
+            "screenOriginX": screen.minX,
+            "screenOriginY": screen.minY,
+            "screenTop": screen.maxY,
+            "scale": (panel.screen ?? NSScreen.main)?.backingScaleFactor ?? 2,
+            "windowNumber": panel.windowNumber,
+            "updatedAt": Date().timeIntervalSince1970,
+        ]
+        let dir = NSHomeDirectory() + "/.dsh/dsh-testhud"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
+            try? data.write(to: URL(fileURLWithPath: dir + "/panel-frame.json"))
         }
     }
 
