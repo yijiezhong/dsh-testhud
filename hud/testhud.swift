@@ -145,10 +145,9 @@ struct Palette {
 enum Theme {
     /// 面板底的不透明度：只留一点点，够暗示"这是一块面板"就行。
     /// 它是**唯一会成片盖住被测对象**的东西，所以压到最低 —— 遮挡面积主要留给文字自己的底板。
-    /// 0.10 时背景文字会穿透（模糊层几何与图像都正常，但密集正文处仍能被读出），
-    /// 所以用这个**必然生效**的层兜底：它是 CALayer 的底色，不像模糊那样依赖采样链路。
-    /// 代价是遮挡从 10% 涨到 45% —— 想更透就往下调，想更干净就往上调。
-    static let fillAlpha: CGFloat = 0.45
+    /// 底图（模糊快照）理论上能把背景压平，实测仍有残留穿透（extent 那个 bug 已经修掉，
+    /// 还有第二个原因没定位）。所以这里取一个折中值：比 0.10 干净，比 0.45 透。
+    static let fillAlpha: CGFloat = 0.35
     // 目标一律写成**对比度**（WCAG 风格：(亮+0.05)/(暗+0.05)），不是"亮度差" ——
     // 这两者差得很远：0.6 的亮度差换算过来只有 ~1.6:1。
     // 目标按 **AAA**（18pt 属大字号，AAA 要 7:1）再**留一档余量**取 9 ——
@@ -498,15 +497,17 @@ final class HUD: NSObject, NSApplicationDelegate {
                 // σ 要够大：14 时密集文字仍能辨认出字形，和面板文字抢读（截图里一眼就看出来）。
                 // 再把对比度压低 —— 背景退成"低对比的纹理"，这比提高面板不透明度更划算：
                 // 后者会增加遮挡，前者不增加。
+                // **用原图的 extent 导出，不能用模糊后的** —— CIGaussianBlur 会把 extent 向外扩约 3σ，
+                // 用它的 extent 导出会带上一圈透明边：341×249 的图里有效内容只有 185×93，
+                // 贴到面板上拉伸之后，面板的边缘区域其实根本没有底图覆盖，原始背景就直接露出来了
+                // （这就是"密集文字仍能读出来"的真正原因，查了很久）。
                 let ci = CIImage(cgImage: cropped)
-                    .applyingGaussianBlur(sigma: 26)
+                let blurredCI = ci.applyingGaussianBlur(sigma: 26)
                     .applyingFilter("CIColorControls", parameters: [
-                        // 背景压到几乎纯色：模糊在稀疏处够用（面板内实测 stddev 0.2~6.5），
-                        // 但密集正文处仍有字形残留，与其继续猜模糊强度，不如直接把它压平 —— 零遮挡代价。
-                        kCIInputContrastKey: 0.15,
-                        kCIInputSaturationKey: 0.55,
+                        kCIInputContrastKey: 0.85,
+                        kCIInputSaturationKey: 0.85,
                     ])
-                blurred = CIContext().createCGImage(ci, from: ci.extent)
+                blurred = CIContext().createCGImage(blurredCI, from: ci.extent)
             }
             return (luminance, blurred)
         } catch {
@@ -514,6 +515,7 @@ final class HUD: NSObject, NSApplicationDelegate {
             return nil
         }
     }
+
 
     /// 换配色：面板色直接改 layer，文字靠重画。
     private func applyPalette() {
