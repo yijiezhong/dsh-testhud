@@ -13,6 +13,8 @@
 //   · **滚动**：只有步骤区滚动，**头部固定**（标题/状态/测试对象/控制权提示/计时）；
 //     新步骤进来自动滚到底，看历史往上滚。
 //   · **透明度**：面板底色 0.44，压得住背景但不挡视线；鼠标穿透，永远不影响操作。
+//   · **层级**：`panel.level = .screenSaver` —— 压在所有窗口之上（浏览器、被测窗口、原生全屏都在它下面）。
+//   · **字号**：`Look.fontScale`（当前 1.2）一处调，全部字号跟着走。
 //
 // 进度文件 schema 见插件 README（`lib/hud.js` 与 `bin/testhud.js` 都写它）。
 import AppKit
@@ -47,7 +49,11 @@ let topInsetArg = CommandLine.arguments.count > 3 ? (Double(CommandLine.argument
 // MARK: - 尺寸与样式
 
 private enum Look {
-    static let width: CGFloat = 560
+    /// 字号整体倍率（用户要求"文字调大一点，比如原来的 1.2 倍"）。
+    /// 改这一个数字，下面所有字号一起跟着走。
+    static let fontScale: CGFloat = 1.2
+
+    static let width: CGFloat = 560 * fontScale         // 面板也跟着宽一点，免得字大了更爱折行
     static let inset: CGFloat = 14              // 面板内边距
     static let screenMargin: CGFloat = 14       // 离屏幕边缘
     static let maxHeightRatio: CGFloat = 0.62   // 最多占屏幕可见高度的 62%
@@ -55,15 +61,15 @@ private enum Look {
     static let bgWhite: CGFloat = 0.10          // 底色比纯黑浅一点
     static let cornerRadius: CGFloat = 12
 
-    static let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
-    static let stateFont = NSFont.systemFont(ofSize: 13, weight: .bold)
-    static let handoffFont = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
-    static let metaFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    static let stepFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    static let detailFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+    static let titleFont = NSFont.systemFont(ofSize: 14 * fontScale, weight: .semibold)
+    static let stateFont = NSFont.systemFont(ofSize: 13 * fontScale, weight: .bold)
+    static let handoffFont = NSFont.systemFont(ofSize: 12.5 * fontScale, weight: .semibold)
+    static let metaFont = NSFont.monospacedSystemFont(ofSize: 11 * fontScale, weight: .regular)
+    static let stepFont = NSFont.systemFont(ofSize: 12 * fontScale, weight: .semibold)
+    static let detailFont = NSFont.systemFont(ofSize: 11 * fontScale, weight: .regular)
     static let style: NSMutableParagraphStyle = {
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = 2
+        p.lineSpacing = 2 * fontScale
         return p
     }()
 
@@ -92,12 +98,15 @@ final class HUD: NSObject, NSApplicationDelegate {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Look.width, height: 96),
                         styleMask: [.nonactivatingPanel, .borderless],
                         backing: .buffered, defer: false)
-        panel.level = .statusBar                    // 盖在被测应用之上
+        // 压在所有窗口之上：`.statusBar`(25) 只比普通窗口高，浏览器自己的面板/原生全屏窗口能盖住它
+        // （用户反馈"浮层没在最前面"）。`.screenSaver`(1000) 是普通应用能拿到的最高层级。
+        panel.level = .screenSaver
         panel.ignoresMouseEvents = true             // 鼠标穿透：不挡操作
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // 跟着所有空间、原生全屏也显示、不参与 Mission Control 排序
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: Look.width, height: 96))
         container.wantsLayer = true
