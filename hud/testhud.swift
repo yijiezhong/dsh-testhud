@@ -147,6 +147,9 @@ enum Theme {
     /// 它是**唯一会成片盖住被测对象**的东西，所以压到最低 —— 背景由底图（模糊快照）压平。
     /// 0.10 试过：观测工具在同一块密集文字背景上量到 3 行背景文字透上来（都是刚打出来的聊天内容），
     /// 所以这一层仍然要留一点 —— 底图能压平静态背景，但它是 2 秒前的快照，追不上正在变化的区域。
+    /// 0.10 / 0.20 都试过：密集文字背景上各会漏 1 行，而且漏的总是**背景上刚打出来的内容** ——
+    /// SCK 采样有 100~300ms 延迟，追不上正在被打印的字，这是采样式底图的固有代价。
+    /// 0.35 是这几轮里唯一实测 0 漏的值。
     static let fillAlpha: CGFloat = 0.35
     // 目标一律写成**对比度**（WCAG 风格：(亮+0.05)/(暗+0.05)），不是"亮度差" ——
     // 这两者差得很远：0.6 的亮度差换算过来只有 ~1.6:1。
@@ -235,6 +238,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     private var themeTimer: Timer?
     private var doneSince: Date?
     private var lastFingerprint = ""
+    /// 只反映"面板内容"的指纹：**不含计时行**（它每秒都变），用来判断该不该立刻重采底图。
+    private var lastContentFingerprint = ""
+    private var lastSampleAt: TimeInterval = 0
     private var placed = false
     /// 当前用哪套配色。默认按"浅背景"起手，第一次采样之后就会纠正。
     /// 最后一次量到的背景亮度 —— 整套配色（颜色 + 四个透明度）都由它推出来。
@@ -317,7 +323,8 @@ final class HUD: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
         // 显示之前先量一次（这一帧不闪），之后每 2 秒实时跟着背景走：配色与透明度都自动调。
         refreshTheme()
-        themeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        // 0.7 秒：底图是"面板下方此刻的样子"，周期越短越追得上正在变化的背景。
+        themeTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
             self?.refreshTheme()
         }
         RunLoop.current.add(themeTimer!, forMode: .common)
@@ -353,6 +360,18 @@ final class HUD: NSObject, NSApplicationDelegate {
         let foot = composeFooter(p)
         let fingerprint = alert.string + head.string + body.string + foot.string
         let finished = (p.status == "done" || p.status == "failed")
+
+        // 面板内容真变了（不是计时在跳）就立刻重采底图 —— 底图追不上变化是"背景文字透上来"的根因。
+        // 0.5 秒的防抖：内容连续变化时不必每次都采。
+        let content = contentFingerprint(p)
+        if content != lastContentFingerprint {
+            lastContentFingerprint = content
+            let now = Date().timeIntervalSince1970
+            if now - lastSampleAt > 0.5 {
+                lastSampleAt = now
+                refreshTheme()
+            }
+        }
 
         if fingerprint != lastFingerprint {
             lastFingerprint = fingerprint
@@ -434,6 +453,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     }
 
     private func refreshTheme() {
+        lastSampleAt = Date().timeIntervalSince1970
         guard let screen = panel.screen ?? NSScreen.main else { return }
         // 面板在**自己那块屏**上的位置（点，左上原点）—— 采样只用这一块。
         let frame = panel.frame
@@ -548,6 +568,15 @@ final class HUD: NSObject, NSApplicationDelegate {
         for field in [alertField, headerField, stepsField, footerField] {
             field?.needsDisplay = true
         }
+    }
+
+    /// 面板内容的指纹（不含时间）。
+    private func contentFingerprint(_ p: Progress) -> String {
+        var s = p.title + "|" + (p.target ?? "") + "|" + (p.note ?? "") + "|" + (p.status ?? "")
+        for step in p.steps ?? [] {
+            s += "|" + step.name + "\u{1}" + (step.expect ?? "") + "\u{1}" + (step.actual ?? "") + "\u{1}" + (step.state ?? "")
+        }
+        return s
     }
 
     /// 把面板的精确几何写到磁盘，供观测工具使用（`bin/testhud-inspect.py`）。
