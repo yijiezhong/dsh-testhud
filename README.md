@@ -145,7 +145,12 @@ the measured luminance), so anything solved "just barely" comes out short.
 against `primaryContrast` (9) / `secondaryContrast` (7), clamped to black or white when the floor simply cannot give
 that much. The second grey targets "0.91 × the contrast the first one actually reached" — solving both independently
 would pin them both to pure white on a dark panel, and the two-grey split is this panel's only means of hierarchy.
-The banner works the same way: brightness *and* text colour are solved from the environment, opacity pinned at 0.55.
+The banner goes further — **it is the one place left with a constant, and that constant is only the hue** (yellow =
+stop, green = take over; that meaning must not drift). Its saturation is `base × (1 − 0.5 × envSat)`: a fully
+saturated bar over a coloured backdrop is visual noise rather than information, so it comes down when the environment
+has colour and stays saturated when it does not (there it carries the legibility by itself). Brightness and text colour
+are solved from the environment; opacity is pinned at 0.55. Measured: environment saturation 0.195 → banner saturation
+0.903, and 0.166 → 0.917, with the banner's text landing exactly on 6.50:1 against its own bar.
 
 **The colour is solved too, black and white first:**
 
