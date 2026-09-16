@@ -302,6 +302,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 上一次采样的面板尺寸。面板长高/缩短时底图必须重采 —— 只比亮度的话，同一背景下面板变高
     /// 不会触发重采，多出来的下半截就没有模糊覆盖（踩过）。
     private var sampledSize: NSSize = .zero
+    /// 上一次量到的**明暗跨度**（p10~p90）。底图该压多平由它决定，所以它变了也要重采：
+    /// 面板从纯色区域挪到明暗交界处时，backdrop 可能几乎没动，但文字失准的风险已经完全不同。
+    private var spread: CGFloat = 0
     /// 上一次布局出来的面板高度。它一变就立刻重采底图 —— 否则要等下一个采样周期，
     /// 那段窗口里底图是旧尺寸的（被拉伸铺满，内容与当前区域不对应）。
     private var laidOutHeight: CGFloat = -1
@@ -515,32 +518,34 @@ final class HUD: NSObject, NSApplicationDelegate {
         let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         let exclude = panel.windowNumber
         let previous = backdrop
+        let previousSpread = spread
         let previousSize = sampledSize
         let size = frame.size
 
         // 采样放**后台线程**：ScreenCaptureKit 的 async 调用和 @MainActor 会互等 ——
         // 症状是一条日志都不出、配色永远停在初始值（踩过）。采完再回主线程套用。
-        Task.detached { [rect, displayID, exclude, previous, previousSize, size] in
-            guard let (luminance, snapshot) = await Self.capturePanelArea(rect, displayID: displayID,
-                                                                         excluding: exclude) else {
+        Task.detached { [rect, displayID, exclude, previous, previousSpread, previousSize, size] in
+            guard let (luminance, spread, snapshot) = await Self.capturePanelArea(rect, displayID: displayID,
+                                                                                  excluding: exclude) else {
                 FileHandle.standardError.write("testhud: sample FAILED\n".data(using: .utf8)!); return }
-            FileHandle.standardError.write(String(format: "testhud: backdrop=%.3f\n", luminance).data(using: .utf8)!)
-            // 亮度变化小于 4% 且面板尺寸没变就不重绘，免得背景稍微一动整个面板跟着抖。
+            // 亮度变化小于 4%、跨度变化小于 0.12、面板尺寸也没变，就不重绘 ——
+            // 免得背景稍微一动整个面板跟着抖。跨度也要比：面板从纯色区挪到明暗交界处时
+            // backdrop 可能几乎没动，但底图该压多平已经完全不同。
             let sizeChanged = abs(size.height - previousSize.height) > 1 || abs(size.width - previousSize.width) > 1
-            guard abs(luminance - previous) > 0.04 || sizeChanged else { return }
+            guard abs(luminance - previous) > 0.04 || abs(spread - previousSpread) > 0.12 || sizeChanged else { return }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.backdrop = luminance
+                self.spread = spread
                 self.sampledSize = size
                 if let snapshot { self.blurView.image = NSImage(cgImage: snapshot, size: .zero) }
-                FileHandle.standardError.write("testhud: snapshot=\(snapshot == nil ? "nil" : "ok") view=\(self.blurView.image == nil ? "empty" : "set")\n".data(using: .utf8)!)
                 self.applyPalette()
             }
         }
     }
 
     private static func capturePanelArea(_ rect: CGRect, displayID: CGDirectDisplayID?,
-                                         excluding windowNumber: Int) async -> (CGFloat, CGImage?)? {
+                                         excluding windowNumber: Int) async -> (CGFloat, CGFloat, CGImage?)? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first
@@ -563,19 +568,40 @@ final class HUD: NSObject, NSApplicationDelegate {
             let y1 = min(image.height, y0 + max(1, Int(rect.height * k)))
 
             var sum = 0.0, count = 0
+            var hist = [Int](repeating: 0, count: 64)      // 顺带量出这块区域的明暗跨度
             for y in y0..<y1 {
                 for x in x0..<x1 {
                     let o = y * stride + x * bpp
                     let r = Double(data[o + 2]) / 255, g = Double(data[o + 1]) / 255, b = Double(data[o]) / 255
-                    sum += 0.2126 * r + 0.7152 * g + 0.0722 * b
+                    let v = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                    sum += v
+                    hist[min(63, Int(v * 64))] += 1
                     count += 1
                 }
             }
             let luminance = count > 0 ? sum / Double(count) : 0.5
+            // 覆盖区域的明暗跨度（p10~p90）。这不是个摆设：面板底是半透明的，底图会把这块区域的
+            // **大尺度明暗**留在面板上，而面板上的文字只有一个颜色 —— 一边亮一边暗时，无论配深字
+            // 还是白字都会有一半失准（实测：同一块面板上底色从 0.51 到 0.31，白字对亮的那半只有 2.5:1）。
+            // 跨度是"这个风险有多大"的唯一量度，底图该压多平、由它决定。
+            var spread: CGFloat = 0
+            if count > 0 {
+                func pct(_ p: Double) -> Double {
+                    var acc = 0
+                    for (i, n) in hist.enumerated() {
+                        acc += n
+                        if Double(acc) >= p * Double(count) { return Double(i) / 64 }
+                    }
+                    return 1
+                }
+                spread = CGFloat(pct(0.90) - pct(0.10))
+            }
 
             // 面板那块位置的一份**模糊快照** —— 它会成为面板的底。
             // 后方内容因此变成柔和的光斑：仍然看得出"下面有东西"，但不会和面板文字抢读。
             var blurred: CGImage?
+            /// 面板底的**等效背景亮度** —— 会被换成"底图真实的均值"，见下面。
+            var effective = luminance
             if let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) {
                 // σ 要够大：14 时密集文字仍能辨认出字形，和面板文字抢读（截图里一眼就看出来）。
                 // 再把对比度压低 —— 背景退成"低对比的纹理"，这比提高面板不透明度更划算：
@@ -588,14 +614,42 @@ final class HUD: NSObject, NSApplicationDelegate {
                 // σ 与对比度是两把不同的刀：σ 负责把字形化开，对比度负责把剩下的痕迹压淡。
                 // 面板压在最密的文字上时（终端铺满整屏的 ls 输出），σ=26 之后仍留下条纹状的痕迹
                 // —— 低方差行占比只有 16%（稀疏背景时是 43~51%），所以两把刀都加一点。
+                //
+                // 对比度再按**跨度**自适应：跨度大就压得更平。压平不增加遮挡（面板底的不透明度没动），
+                // 代价只是"下面有东西"的痕迹变淡 —— 那比让面板自己的文字失准划算。
+                let contrast = max(0.12, 0.40 - spread * 0.70)
+                // 再把均值**锚回 backdrop**。这一步是必须的：对比度是围绕中灰压缩的，
+                // 压完之后这块图的均值不再是 backdrop（0.30 的图会被抬到 0.42），
+                // 而配色算法是拿 backdrop 算面板底的 —— 两者一旦不一致，算出来的对比度就是假的，
+                // 面板会照着一个不存在的底去配文字色（这正是"底色 0.51 到 0.31"那次的根因）。
+                let offset = (luminance - 0.5) * (1 - contrast)
                 let blurredCI = ci.applyingGaussianBlur(sigma: 34)
                     .applyingFilter("CIColorControls", parameters: [
-                        kCIInputContrastKey: 0.40,
+                        kCIInputContrastKey: contrast,
                         kCIInputSaturationKey: 0.70,
                     ])
+                    // 亮度单独一次，保证它是压在对比度**之后**的线性偏移（同一个 filter 里的先后顺序不可靠）
+                    .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: offset])
                 blurred = CIContext().createCGImage(blurredCI, from: ci.extent)
+                // 量出**底图真正的平均亮度**，拿它当 backdrop —— 而不是采样均值。
+                // 两者在浅色背景下只差 0.001，在深色背景下能差一倍：CIColorControls 工作在
+                // **线性**空间，而采样均值是在 **gamma** 空间（0~255 直接加权）算的，中间还隔着
+                // 一次对比度压缩、一次亮度偏移。配色算法是拿 backdrop 去算面板底的 ——
+                // 这个数一旦不是"底图真实的均值"，算出来的对比度就是对着一个不存在的底算的
+                // （这正是"同一块面板上底色从 0.51 到 0.31"那个 bug 的另一半）。
+                // 与其推公式去补偿，不如直接量 —— 这也是这个项目一贯的做法。
+                let avg = blurredCI.applyingFilter("CIAreaAverage",
+                                                   parameters: [kCIInputExtentKey: CIVector(cgRect: ci.extent)])
+                var px = [UInt8](repeating: 0, count: 4)
+                // 必须**显式要 sRGB**：`CIAreaAverage` 的结果在**线性**空间，`colorSpace: nil`
+                // 会把线性值原封不动当成 sRGB 交出来，底图均值于是偏暗一倍（实测 0.039 对截图 0.118）。
+                // `CIFormat.RGBA8` 同时把字节顺序定死了 —— px[0] 就是红，不用猜 bitmapInfo。
+                CIContext().render(avg, toBitmap: &px, rowBytes: 4,
+                                   bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                   format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+                effective = (0.2126 * Double(px[0]) + 0.7152 * Double(px[1]) + 0.0722 * Double(px[2])) / 255
             }
-            return (luminance, blurred)
+            return (effective, spread, blurred)
         } catch {
             FileHandle.standardError.write("testhud: SCK error \(error)\n".data(using: .utf8)!)
             return nil
@@ -634,6 +688,7 @@ final class HUD: NSObject, NSApplicationDelegate {
         let info: [String: Any] = [
             "updatedAt": Date().timeIntervalSince1970,
             "backdrop": backdrop,
+            "spread": spread,
             "fillAlpha": fill.alphaComponent,
             "panelLum": panelLum,
             "primaryLum": primaryLum,
