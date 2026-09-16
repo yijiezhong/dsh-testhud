@@ -145,12 +145,22 @@ the measured luminance), so anything solved "just barely" comes out short.
 against `primaryContrast` (9) / `secondaryContrast` (7), clamped to black or white when the floor simply cannot give
 that much. The second grey targets "0.91 × the contrast the first one actually reached" — solving both independently
 would pin them both to pure white on a dark panel, and the two-grey split is this panel's only means of hierarchy.
-The banner goes further — **it is the one place left with a constant, and that constant is only the hue** (yellow =
-stop, green = take over; that meaning must not drift). Its saturation is `base × (1 − 0.5 × envSat)`: a fully
-saturated bar over a coloured backdrop is visual noise rather than information, so it comes down when the environment
-has colour and stays saturated when it does not (there it carries the legibility by itself). Brightness and text colour
-are solved from the environment; opacity is pinned at 0.55. Measured: environment saturation 0.195 → banner saturation
-0.903, and 0.166 → 0.917, with the banner's text landing exactly on 6.50:1 against its own bar.
+The banner goes further — **it is the one place left with a constant, and that constant is only the hue**: amber 0.10 =
+stop, teal 0.45 = take over. (It used to be yellow 0.14 and green 0.38, only 0.24 apart — and yellow/green is precisely
+the pair green-blind viewers confuse most. At 0.35 apart they are far easier to tell apart, and teal's RGB is
+`(0, 1, 0.7)`, which still reads as green — so "green = go" survives.)
+
+Everything else is solved: saturation is `base × (1 − 0.5 × envSat)` (a fully saturated bar over a coloured backdrop is
+visual noise rather than information, so it comes down when the environment has colour and stays saturated when it does
+not — there it carries the legibility by itself); brightness is solved; opacity is pinned at 0.55.
+
+**The bar's text is plain black or white** — no "solve to exactly the target", no tinting. The bar's brightness is
+deliberately pushed up to "bright enough", so pure black is always available there and always higher contrast: with the
+bar showing 0.445, pure black measures **9.90:1** while "solved to the target" gave only 6.50:1 — 3.4:1 given away for
+nothing. (Carrying the panel text's rule over to the bar was simply wrong: the panel floor can land at any luminance,
+the bar cannot.)
+
+Measured: the bar reaches **11.7:1** on a light backdrop and **8.9:1** on a dark one — AAA either way.
 
 **The colour is solved too, black and white first:**
 
