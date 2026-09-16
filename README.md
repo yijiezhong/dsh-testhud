@@ -48,6 +48,12 @@ dsh plugin --profile web remove dsh-testhud
 The panel sizes itself to its content (capped at 62% of the visible screen height), scrolls **only** the step list while
 the header stays fixed, and disappears 12 seconds after `done` — long enough to read the verdict.
 
+## The rule
+
+**If a verification is running, the panel must be up.** Never "just run the commands" without it: during a series of
+runs, `start` again after a `done` and before the next action. Whoever is waiting must be able to see what is being
+tested and whether it is safe to take back the keyboard.
+
 ## The CLI
 
 Same logic, same progress file, for shell scripts and CI:
