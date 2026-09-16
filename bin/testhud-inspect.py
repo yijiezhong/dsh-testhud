@@ -34,6 +34,37 @@ def _contrast(a, b):
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
 
+def dominant_pair(px):
+    """行框里最可信的（底, 文字）一对颜色。
+
+    按量化色簇投票：占比最大的一簇当底，离它最远、且占比仍 >=3% 的一簇当文字。
+
+    为什么不用"取极端像素"：OCR 的行框常常跨出它所在的色块 —— 色带那一行实测
+    y=390..446，而色带只到 426，多出来的 20px 是面板正文的深底。极端像素法于是
+    把面板底当成"文字色"、把色带黄当成"底"，把真实 5.3:1 报成 2.1:1（踩过）。
+    色带正是这个浮层最关键的信号（能不能动鼠标键盘），不能让它被这种伪影冤枉。
+    """
+    total = len(px)
+    if not total:
+        return None
+    buckets = {}
+    for c in px:
+        buckets.setdefault((c[0] >> 4, c[1] >> 4, c[2] >> 4), []).append(c)
+    groups = [cols for cols in buckets.values() if len(cols) / total >= 0.03]
+    if not groups:
+        return None
+
+    def avg(cols):
+        return tuple(sum(c[k] for c in cols) // len(cols) for k in range(3))
+
+    groups.sort(key=len, reverse=True)
+    plate = avg(groups[0])
+    if len(groups) == 1:
+        return plate, plate
+    text = avg(max(groups[1:], key=lambda cols: abs(_lum(avg(cols)) - _lum(plate))))
+    return plate, text
+
+
 def find_ocr():
     candidates = sorted(glob(f"{HOME}/Library/Caches/dsh-ios/bin/ocr/*/ocr"), reverse=True)
     return candidates[0] if candidates else None
@@ -178,10 +209,20 @@ def main():
             px = [im.getpixel((x, y)) for y in range(by0, by1) for x in range(bx0, bx1)]
             if not px:
                 continue
-            plate = Counter(px).most_common(1)[0][0]
-            core = sorted(px, key=lambda c: abs(_lum(c) - _lum(plate)), reverse=True)[:max(4, len(px) // 50)]
-            text = tuple(sum(c[k] for c in core) // len(core) for k in range(3))
+            pair = dominant_pair(px)
+            if pair:
+                plate, text = pair
+            else:
+                plate = Counter(px).most_common(1)[0][0]
+                core = sorted(px, key=lambda c: abs(_lum(c) - _lum(plate)), reverse=True)[:max(4, len(px) // 50)]
+                text = tuple(sum(c[k] for c in core) // len(core) for k in range(3))
             r = _contrast(plate, text)
+            if r < 1.5:
+                # 文字和底几乎同色，物理上不会发生 —— 这是伪影：行框跨出了面板，或者
+                # belongs() 把背景里一条共享 3-gram 的文字（实测是一条含 "dsh-testhud" 的路径）
+                # 当成了面板自己的行，于是量出 1.1:1。不计入最低值，否则结论被一行噪声带走。
+                print(f"  {'—':>3}  {r:5.1f}:1  {i['text'][:40]}   ← 行框跨界，不计入")
+                continue
             if r < worst:
                 worst, worst_text = r, i["text"][:36]
             mark = "AAA" if r >= 7 else ("AA" if r >= 4.5 else "低")

@@ -15,10 +15,12 @@ This panel answers exactly that, on screen, without stealing focus:
 
 - **What is being tested** — title, target, start time and elapsed seconds.
 - **Every step, with expectation and actual result** — one line each, ✅ / ❌ / ⏳ / •
-- **A permanent line about control, at the very top**: "🖱️⌨️ working — hands off the mouse and keyboard" while running,
-  "✅ finished, you can take back control" when done. It is the heaviest text on the panel and the only one carrying a
-  background: **black on solid yellow while it is unsafe to touch anything, black on solid green once you may take
-  over** — the highest-contrast pairing a translucent dark panel can show.
+- **A permanent line about control, at the very top** — the panel's own strings are Chinese; this one reads
+  `🖱️⌨️ 正在进行：先别动鼠标键盘，以免打断测试` while running and `✅ 已结束，可以收回鼠标键盘的控制权了` when done.
+  It is the heaviest text on the panel and the only line carrying a background:
+  **black on yellow while it is unsafe to touch anything, black on green once you may take over**. The hue is fixed
+  (yellow = stop, green = take over — that meaning must not drift), the opacity is pinned at 0.55 so what is underneath
+  stays readable, and only the brightness is solved, to keep the black text at 4.5:1.
 - **It never gets in the way**: click-through (the mouse passes straight through), always on top, not in the Dock
   and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
 
@@ -102,38 +104,45 @@ below that chrome — level with the page's own header. Set it to `0` to get the
 or to whatever puts the panel where you want it. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
 
 **Everything is computed from one number.** The panel samples the average luminance of *the rectangle it is about to
-cover* — only that rectangle — every 2 s and whenever the frontmost app changes. That single value then derives the
-whole appearance: the panel fill, its direction (dark over a light backdrop, light over a dark one), both text colours,
-the text plates, the banner colours and all four opacities. There are no two presets; there is one formula.
+cover* — only that rectangle — every 0.7 s, and immediately whenever the frontmost app changes, the panel resizes, or
+its own content changes (0.5 s debounce). That single value derives the whole appearance: the panel fill and its
+direction, both text colours, the banner's colour and brightness, and the panel's own opacity. There are no two
+presets; there is one formula.
 
-The trick is the **direction**, and it is the opposite of what seems natural. The panel goes *with* the backdrop, not
-against it: a light backdrop gets a lighter panel with dark text, a dark backdrop gets a darker panel with white text.
-Once the direction is right, **10% opacity is enough** — so no text plates are needed at all, and the panel stays 90%
-see-through. Going the other way (dark panel over a light page) is what forces opaque plates under every line, and those
-plates are what "the covered area is unreadable" means.
+The trick is the **direction**: the panel goes *with* the backdrop, not against it — a light backdrop gets a lighter
+panel with dark text, a dark backdrop gets a darker panel with white text. Going the other way (a dark panel over a
+light page) is only fixable by piling on opacity, and that is exactly what makes the covered area unreadable.
 
-Measured: panel body 0.93 over a white page (backdrop 0.93) and 0.10 over a dark terminal (backdrop 0.08) — the panel is
-essentially invisible as a surface, and what you read is text floating on the content itself.
+What is left after that is a trade-off that **cannot be solved, only spent**: the pixels that give the panel's text
+something to sit on are the same pixels that hide what is underneath. Both ways out were built and measured — per-line
+plates (rejected by the user: the content behind them became unreadable) and making the panel itself as transparent as
+possible (0.10 / 0.20 / 0.35 all leaked 1–3 lines of background text on a dense backdrop, always the text being *typed
+right then*). The floor is therefore **0.50**: on ordinary backdrops the panel's text is far past AAA, and the covered
+region still shows light and shape. On black-on-white text filling the whole screen, that is the limit of "both".
 
-**The panel's ground is a blurred snapshot of what it covers**, captured with the same 2 s sampling pass and blurred with
-σ=14. Fully see-through panels have a failure mode of their own: the text underneath stays perfectly legible and fights
-the panel's own text — same size, same colour, two layers of type in one place. Blurring the ground turns that competing
-text into soft light and shade: you can still tell *something* is there (texture stddev drops from 30 to 8), but it no
-longer competes. It is the panel equivalent of ground glass, and it replaces the per-line plates entirely.
+**The panel's ground is a blurred snapshot of what it covers**, taken in the same sampling pass, blurred with σ=34 and
+then flattened (contrast 0.40, saturation 0.70). A fully see-through panel has a failure mode of its own: the text
+underneath stays perfectly legible and fights the panel's own text — same size, similar colour, two layers of type in
+one place. Blurring the ground turns that competing text into soft light and shade: you can still tell *something* is
+there, but it no longer competes. It is the panel equivalent of ground glass.
 
-Targets are WCAG-style contrast ratios, solved by algebra, with one notch of headroom: `plateLum = (text + 0.05) /
-contrast − 0.05`, then `alpha = solveAlpha(over: panelLum, base: plateLum)`. The ask is **9:1** — because a paper 7:1
-measures about 6.6–6.8 on screen (CJK strokes are thin, and antialiasing lifts the measured text luminance).
+Contrast is WCAG-style (`(lighter + 0.05) / (darker + 0.05)`), but it is **not solved to the exact bar**: the lesson
+this project paid for is that a paper 7:1 measures only 6.6–6.8 on screen (CJK strokes are thin, and antialiasing lifts
+the measured luminance), so anything solved "just barely" comes out short. The two greys are simply taken to their
+extremes (0.06 / 0.08 on a light panel, white / 0.90 on a dark one); only the banner solves anything — its
+**brightness** is solved so the black text clears 4.5:1, with opacity pinned at 0.55.
 
-Measured, sampled inside each text box:
+Measured by `bin/testhud-inspect.py` on the geometry the panel exports itself. **Both backdrops are dense real text**,
+not solid colour — a solid backdrop cannot reproduce the failure this panel exists to avoid:
 
-| backdrop | panel | title | secondary | banner |
-|---|---|---|---|---|
-| white page | dark, body 0.73 | **10.4:1** | **9.0:1** | **7.1:1** |
-| dark terminal | light, body 0.19 | **8.6:1** | **8.6:1** | 5.8:1 |
+| backdrop | panel | banner | title / step | expect / actual | target / timer |
+|---|---|---|---|---|---|
+| light (the DSH UI in a browser: dark text on white) | light, body 0.93–0.95 | 5.0:1 | **8.0:1** | 6.7:1 | 6.6 / 6.7:1 |
+| dark (a terminal: white text on black) | dark, body 0.18–0.20 | 3.7:1 | 4.9 / 5.0:1 | 4.6:1 | 3.9 / 4.5:1 |
 
-18 pt counts as large text, so WCAG AAA asks 4.5:1 — every row clears the *body-text* bar of 7:1 except the banner on a
-dark backdrop, which is still above the large-text bar.
+18 pt counts as large text, so WCAG AAA asks 4.5:1. The light backdrop — the everyday case — is 5:1 or better
+everywhere, mostly at AAA's 7:1. Dense dark text is the worst case: 3.7–5.0:1, around the AA large-text bar, and that
+is the price of the 0.50 floor.
 
 Sampling excludes the panel's own window by id, so the panel never hides itself and never flickers.
 
@@ -142,9 +151,9 @@ Sampling excludes the panel's own window by id, so the panel never hides itself 
 The layout follows CRAP deliberately; keep these rules when you edit it:
 
 - **Contrast** — colour carries exactly one meaning (status): the full-width control banner, plus a single coloured
-  character at the head of each step. Everything else is layered with **two** greys (`Look.primary` / `Look.secondary`)
-  and four font weights, never with a second size — every line is `Look.base` (18 pt). Two greys, not three: on a light
-  ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
+  character at the head of each step. Everything else is layered with **two** greys (0.06 / 0.08 on a light panel,
+  white / 0.90 on a dark one) and four font weights, never with a second size — every line is `Look.base` (18 pt).
+  Two greys, not three: on a light ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
 - **Repetition** — one left edge for all content (`Look.inset`), and only three spacing values: 14 pt between groups,
   10 pt between steps, 2–4 pt inside a step.
 - **Alignment** — the banner spans the full panel width and its text indents back to the content edge; a step's
@@ -152,8 +161,9 @@ The layout follows CRAP deliberately; keep these rules when you edit it:
 - **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose
   between.
 
-Measured in the worst case (a white background showing through, panel floor `#333`): primary 4.2:1, expect/actual
-3.7:1, meta 3.0:1 — all at or above the 3:1 WCAG AA bar for large text. On a dark backdrop every ratio roughly doubles.
+Measured in the worst case (dense dark text, see the table above): banner 3.7:1, expect/actual 4.6:1, title 4.9:1.
+The banner is the weakest element by design — its opacity is pinned at 0.55 so the content behind it stays visible, and
+only its brightness is solved, which measures 3.7–5.0:1 once antialiasing and the translucent stack are counted.
 
 Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — and the hierarchy comes from weight alone
 (heavy for the control line, bold for the title and status, semibold for steps, regular for the expect/actual detail).
@@ -183,6 +193,13 @@ wrong because the panel's rectangle was inferred from OCR output while the panel
 each time, content from *outside* the panel (the left half of a terminal, browser tab titles) was mistaken for text
 bleeding through.
 
+It has since learned two traps, both of which produced wrong numbers first. An OCR box can reach **outside the colour
+band it names** — the banner's line box ran 20 px past the banner's bottom edge, so the panel's own dark fill was taken
+for "the text colour" and a true 5.3:1 was reported as 2.1:1; contrast is now computed from colour clusters rather than
+extreme pixels. And `belongs()`'s 3-gram rule can claim a background line that merely shares a fragment with the panel
+(a path containing `dsh-testhud`), which is why anything measuring under 1.5:1 is now reported as an out-of-frame
+artifact instead of a contrast figure. Text and its ground being nearly the same colour does not happen in reality.
+
 ### Test on a backdrop that contains text
 
 Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid
@@ -206,7 +223,7 @@ process the host resolves it. It is not part of the published package.
 ```
 lib/index.js      Cordis host plugin: registers the test_hud tool + a system-prompt section
 lib/hud.js        progress file (~/.dsh/test-progress.json) and the panel process (build / start / stop)
-hud/testhud.swift the panel itself: borderless NSPanel at .statusBar level, ignoresMouseEvents, polls the file every 0.4s
+hud/testhud.swift the panel itself: borderless NSPanel at .screenSaver level, ignoresMouseEvents, polls the file every 0.4s
 bin/testhud.js    CLI over the same core
 ```
 
@@ -225,6 +242,12 @@ The progress file schema is deliberately plain JSON, so anything can write it:
   `stop` / `done` to make it go away.
 - On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the
   top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
+- **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it falls
+  to 3.7–5.0:1. This is not a parameter still waiting to be tuned — fully blocking a ~15:1 high-contrast layer needs a
+  panel opacity of 0.8 or more, which is to say an opaque panel, which throws away "the covered region stays visible".
+  0.50 is where those two meet.
+- **The panel's strings are Chinese** (the control banner, `测试对象：`, `期待：`, `实际：`, `结论：`). Nothing in the panel
+  is localised; a run's own title and step text are whatever the caller wrote.
 
 ## License
 
