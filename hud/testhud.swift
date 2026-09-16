@@ -87,11 +87,6 @@ private enum Look {
     /// 计时用等宽数字：秒数跳动时不会左右抖。
     static let metaFont = NSFont.monospacedDigitSystemFont(ofSize: base, weight: .regular)
 
-    // 控制权色带上的字：黄底（别动鼠标键盘）与绿底（可以接手）都是黑字。
-    // 色带本身色相固定、明度按环境反解、不透明度钉在 0.55 —— 见 Theme.banner。
-    static let alertRunFg = NSColor(calibratedWhite: 0.06, alpha: 1)
-    static let alertDoneFg = NSColor(calibratedWhite: 0.06, alpha: 1)
-
     /// 统一段落样式工厂：间距与缩进都从这里出，保证全篇一个节奏。
     static func para(before: CGFloat = 0, after: CGFloat = 0, indent: CGFloat = 0) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -105,7 +100,8 @@ private enum Look {
 }
 
 
-/// 一整套视觉参数：颜色 + 面板底的不透明度（由环境反解，见 `Theme.palette(for:)`）。
+/// 一整套视觉参数。**这里每一个值都由 backdrop 一个数算出来**（见 `Theme.palette(for:)`）——
+/// 面板底、它的不透明度、两级文字、色带的底色与字色，没有一个是写死的。
 struct Palette {
     let panelFill: NSColor
     let panelBorder: NSColor
@@ -113,6 +109,8 @@ struct Palette {
     let secondary: NSColor
     let alertRunBg: NSColor
     let alertDoneBg: NSColor
+    let alertRunFg: NSColor
+    let alertDoneFg: NSColor
     let stateOk: NSColor
     let stateBad: NSColor
     let stateRun: NSColor
@@ -142,24 +140,57 @@ enum Theme {
     /// 固定不透明度只把面板提到 0.64，深字只有 4.0:1）。
     static let lightPanelTarget: CGFloat = 0.72
     static let darkPanelTarget: CGFloat = 0.25
-    // **不复用那套"解到刚好 N:1"的对比度目标** —— 底板删掉之后它就没有作用对象了（踩过：
-    // 把目标从 9 提到 12，实测仍是 4.1:1，因为解的是底板的不透明度，而底板已经不存在）。
-    // 两级灰现在直接取极端值（见 palette）。教训记在这儿：纸面 7:1 的东西在屏幕上量出来只有
-    // 6.6~6.8 —— 中文笔画细、抗锯齿把实测亮度抬高了，所以"刚好 7:1"的方案实测永远不够。
-    /// 色带上黑字的对比目标。这里**故意只取 AAA 对大字号的门槛（4.5）**，不跟着文字一起上 9 ——
-    /// 黄底为了 9:1 得压到亮度 0.94，而黄色本身只有 0.77，解出来的不透明度会超过 1（被夹到 0.98，
-    /// 成了一条不透光的色纸，把后面的文字全挡掉）。取 4.5 时解出来正好是半透明，后面的字还能看见。
-    static let alertContrast: CGFloat = 4.5
+    // 文字的目标对比度。**文字的亮度不再是写死的常量**（曾经是 0.06 / 0.08 / white / 0.90），
+    // 而是拿面板底的实际亮度**反解**出来的 —— 于是"两级灰"在任何背景上都还是两级，
+    // 对比度也稳定在目标附近，不再随背景漂移（踩过：中灰背景上固定 0.06 只有 7.3:1）。
+    // 目标留了余量：纸面 7:1 的东西在屏幕上量出来只有 6.6~6.8（中文笔画细、抗锯齿抬高实测亮度）。
+    static let primaryContrast: CGFloat = 9      // 标题 / 步骤名 / 结论
+    static let secondaryContrast: CGFloat = 7    // 期待 / 实际 / 元信息
+    /// 二级文字相对一级保留的对比度比例。**只在被物理夹紧时起作用**：
+    /// 暗面板上白字已经贴到 1.0，若两级各自解各自的目标，就会双双变成纯白、层次消失 ——
+    /// 层次是这块面板唯一的层级手段，宁可让二级的对比度低一点也要留住它。
+    static let secondaryRatio: CGFloat = 0.91
+    /// 色带上文字的对比目标。字色现在也是反解出来的，**不必再迁就 0.06 那个旧常量**：
+    /// 解出来的字更黑，白送的对比度就该拿（实测深色密集文字背景上，色带从 3.7:1 提到 6.5:1）。
+    static let alertContrast: CGFloat = 6.5
+    /// 解色带明度时假定的"字有多黑"与目标 —— 这一层只决定**色带该多亮**，不决定最终字色。
+    static let bannerSeedText: CGFloat = 0.06
+    static let bannerSeedContrast: CGFloat = 4.5
     /// 色带的不透明度：钉住不动（用户要求"能看到后面的文字"）；明度不够时去调明度。
     static let bannerAlpha: CGFloat = 0.55
 
-    /// 色带的一层：固定色相与不透明度，**明度反解**到"上面的黑字刚好够 `alertContrast`"。
-    /// 面板本来就够亮时它自然变暗（那时黑字在面板上已有对比，色带不必再亮）。
-    static func banner(hue: CGFloat, saturation: CGFloat, alpha: CGFloat, panelLum: CGFloat) -> NSColor {
-        let floor = plateLum(text: 0.06, contrast: alertContrast, darker: false)
+    /// 一种灰（默认不透明）。
+    static func grey(_ v: CGFloat, alpha: CGFloat = 1) -> NSColor {
+        NSColor(calibratedWhite: min(1, max(0, v)), alpha: alpha)
+    }
+
+    /// WCAG 对比度（与观测工具同一个公式）。
+    static func contrast(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+        (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// "亮度为 `under` 的底上，要够 `contrast`，文字该落在什么亮度" —— `plateLum` 的反函数。
+    /// `lighter` = 文字在底的亮侧（深底配白字）。物理上做不到就贴到 0 或 1，
+    /// 于是实际对比度低于目标 —— 这是诚实的：那个底给不出更多了。
+    static func textLum(over under: CGFloat, contrast: CGFloat, lighter: Bool) -> CGFloat {
+        let v = lighter ? (under + 0.05) * contrast - 0.05
+                        : (under + 0.05) / contrast - 0.05
+        return min(1, max(0, v))
+    }
+
+    /// 色带的一层：色相按状态固定，不透明度钉住，**明度反解**到"带上的字够对比度"。
+    /// 明度受色相与 alpha 限制时会达不到目标，所以**带上的字也跟着反解**：
+    /// 用带底**实际**能达到的亮度去算字色，把差额补回来。
+    static func banner(hue: CGFloat, saturation: CGFloat, alpha: CGFloat, panelLum: CGFloat)
+        -> (fill: NSColor, text: NSColor) {
+        let floor = plateLum(text: bannerSeedText, contrast: bannerSeedContrast, darker: false)
         let needed = (floor - (1 - alpha) * panelLum) / max(0.05, alpha)
-        return NSColor(calibratedHue: hue, saturation: saturation,
-                       brightness: min(1.0, max(0.30, needed)), alpha: alpha)
+        let brightness = min(1.0, max(0.30, needed))
+        // 带底真正呈现出来的亮度：按 alpha 混合。calibratedHue 下"明度 ≈ 亮度"这个近似与实测吻合 ——
+        // 解出 0.617 时实测带底 0.431，反推面板底 0.204，与独立测到的 0.19~0.20 一致。
+        let shown = alpha * brightness + (1 - alpha) * panelLum
+        return (NSColor(calibratedHue: hue, saturation: saturation, brightness: brightness, alpha: alpha),
+                grey(textLum(over: shown, contrast: alertContrast, lighter: false)))
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -198,19 +229,28 @@ enum Theme {
         let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
                                    wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
 
-        let primary = lightPanel ? NSColor(calibratedWhite: 0.06, alpha: 1) : NSColor.white
-        // 没有底板之后，两级的对比只能靠**颜色本身**拉开 —— "解到刚好 N:1"那类目标解的是
-        // **底板**的不透明度，底板没了它就没有作用对象（踩过：把目标从 9 提到 12，实测仍是 4.1:1）。
-        // 所以这里不设目标，直接往极端压。
-        let secondary = lightPanel ? NSColor(calibratedWhite: 0.08, alpha: 1)
-                                   : NSColor(calibratedWhite: 0.90, alpha: 1)
-
         let panelLum = fillAlpha * luminance(fillBase) + (1 - fillAlpha) * backdrop
+
+        // 两级的亮度**由面板底反解**（不再是写死的 0.06 / white / 0.90）。
+        // 深色底面（`lighter`）上解白字，浅色底面上解深字；物理上解不出来就贴极端，
+        // 实际对比度便低于目标 —— 那个底给不出更多了。面板底本身也是反解出来的，
+        // 于是到这里为止，面板上每一层的颜色都只由 backdrop 这一个数决定。
+        let lighter = !lightPanel
+        let primaryLum = textLum(over: panelLum, contrast: primaryContrast, lighter: lighter)
+        // 二级：先看一级**实际**拿到了多少对比度（可能已被夹紧），再按比例退一档 ——
+        // 直接解 secondaryContrast 会在暗面板上撞到 1.0 的天花板，两级双双变纯白，层次就没了。
+        let reachable = contrast(panelLum, primaryLum)
+        let secondaryLum = textLum(over: panelLum,
+                                   contrast: min(secondaryContrast, reachable * secondaryRatio),
+                                   lighter: lighter)
+        let primary = grey(primaryLum)
+        let secondary = grey(secondaryLum)
+
         // 色带也交给"变色龙"：**色相**按状态固定（黄=别动、绿=可以接手，语义不能变），
-        // **明度**由环境反解 —— 目标是"上面的黑字够 4.5:1"，不透明度钉在 0.55（后面的字要能看见）。
+        // **明度与字色**都由环境反解，不透明度钉在 0.55（后面的字要能看见）。
         // 明度不够就调明度，而不是一路加不透明度（那样会变成一条不透光的色纸）。
-        let runBase = banner(hue: 0.14, saturation: 1.00, alpha: bannerAlpha, panelLum: panelLum)
-        let doneBase = banner(hue: 0.38, saturation: 0.85, alpha: bannerAlpha, panelLum: panelLum)
+        let (runBase, runFg) = banner(hue: 0.14, saturation: 1.00, alpha: bannerAlpha, panelLum: panelLum)
+        let (doneBase, doneFg) = banner(hue: 0.38, saturation: 0.85, alpha: bannerAlpha, panelLum: panelLum)
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
@@ -228,6 +268,8 @@ enum Theme {
             secondary: secondary,
             alertRunBg: runBase,
             alertDoneBg: doneBase,
+            alertRunFg: runFg,
+            alertDoneFg: doneFg,
             stateOk: stateOk, stateBad: stateBad, stateRun: stateRun, stateInfo: stateInfo)
     }
 }
@@ -574,6 +616,39 @@ final class HUD: NSObject, NSApplicationDelegate {
         for field in [alertField, headerField, stepsField, footerField] {
             field?.needsDisplay = true
         }
+        exportTheme()
+    }
+
+    /// 把"这一帧到底用了哪套参数"写到磁盘，供观测工具核对（`bin/testhud-inspect.py`）。
+    /// 与 `panel-frame.json` 同一个理由：**不要靠猜**。面板的底、两级文字、色带都是算出来的 ——
+    /// 只看截图反推，只能知道"渲染成了什么"，不知道"为什么是这个值"。
+    /// 尤其要盯 `sampledSize` 与 `panelSize` 是否一致：面板长高之后底图若还是旧尺寸，它会被拉伸铺满，
+    /// 于是每一行的亮度不再等于 `backdrop`（"同一块面板上底色从 0.51 到 0.31"就是这么来的）。
+    private func exportTheme() {
+        let fill = palette.panelFill
+        // 与 `Theme.palette(for:)` 里同一个式子：面板底 = fillAlpha 混合在 backdrop 之上。
+        let panelLum = fill.alphaComponent * Theme.luminance(fill)
+                     + (1 - fill.alphaComponent) * backdrop
+        let primaryLum = Theme.luminance(palette.primary)
+        let secondaryLum = Theme.luminance(palette.secondary)
+        let info: [String: Any] = [
+            "updatedAt": Date().timeIntervalSince1970,
+            "backdrop": backdrop,
+            "fillAlpha": fill.alphaComponent,
+            "panelLum": panelLum,
+            "primaryLum": primaryLum,
+            "secondaryLum": secondaryLum,
+            "primaryVsPanel": Theme.contrast(panelLum, primaryLum),
+            "secondaryVsPanel": Theme.contrast(panelLum, secondaryLum),
+            "panelW": panel.frame.width, "panelH": panel.frame.height,
+            "sampledW": sampledSize.width, "sampledH": sampledSize.height,
+            "blurW": blurView.image?.size.width ?? 0, "blurH": blurView.image?.size.height ?? 0,
+        ]
+        let dir = NSHomeDirectory() + "/.dsh/dsh-testhud"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
+            try? data.write(to: URL(fileURLWithPath: dir + "/theme.json"))
+        }
     }
 
     /// 面板内容的指纹（不含时间）。
@@ -623,7 +698,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 文字用 headIndent 拉回内容左边界，和下面几行对齐（Alignment）。
     private func composeAlert(_ p: Progress) -> NSAttributedString {
         let status = p.status ?? "running"
-        let foreground = (status == "running") ? Look.alertRunFg : Look.alertDoneFg
+        let foreground = (status == "running") ? palette.alertRunFg : palette.alertDoneFg
         return NSAttributedString(string: handoffLine(status), attributes: [
             .font: Look.alertFont,
             .foregroundColor: foreground,
