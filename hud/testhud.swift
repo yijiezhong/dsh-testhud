@@ -150,6 +150,15 @@ enum Theme {
     /// 暗面板上白字已经贴到 1.0，若两级各自解各自的目标，就会双双变成纯白、层次消失 ——
     /// 层次是这块面板唯一的层级手段，宁可让二级的对比度低一点也要留住它。
     static let secondaryRatio: CGFloat = 0.91
+    /// 环境饱和度到这个值以上才算"有颜色"，文字才跟着上色。
+    /// 不能定太高：面板覆盖的是一整块区域，**平均**会把颜色稀释掉 —— 实测一屏彩色文字
+    /// （红黄绿青蓝紫块铺满）平均下来只有 0.20，0.22 的门槛反而让它落回黑白。
+    /// 也不能太低：中性里带一点点色的界面（浅灰蓝工具栏之类）会误触发。
+    /// 0.15 是这两头之间的值；真正中性的画面离得很远（实测白页 0.001），不会误判。
+    static let minTintSat: CGFloat = 0.15
+    /// 上色时为色相让出的亮度（0~1）。色相不改善任何对比度数字，所以只让很小一档：
+    /// 实测在 panelLum 0.15 的底上，白字从 5.24:1 退到 4.95:1，仍高过大字 AA 的 4.5。
+    static let tintRelax: CGFloat = 0.05
     /// 色带上文字的对比目标。字色现在也是反解出来的，**不必再迁就 0.06 那个旧常量**：
     /// 解出来的字更黑，白送的对比度就该拿（实测深色密集文字背景上，色带从 3.7:1 提到 6.5:1）。
     static let alertContrast: CGFloat = 6.5
@@ -160,8 +169,12 @@ enum Theme {
     static let bannerAlpha: CGFloat = 0.55
 
     /// 一种灰（默认不透明）。
+    /// **必须用 sRGB 构造**：`calibratedWhite` 会被色彩空间转换改掉 —— 实测构造 0.032 读回 0.026、
+    /// 构造 0.06 读回 0.073，而整套对比度都是按"构造值 = 实际亮度"反解的，用 calibrated 会让
+    /// 实际对比度对不上目标（实测 secondary 只有 6.26:1，而目标是 7）。
     static func grey(_ v: CGFloat, alpha: CGFloat = 1) -> NSColor {
-        NSColor(calibratedWhite: min(1, max(0, v)), alpha: alpha)
+        let x = min(1, max(0, v))
+        return NSColor(srgbRed: x, green: x, blue: x, alpha: alpha)
     }
 
     /// WCAG 对比度（与观测工具同一个公式）。
@@ -170,12 +183,56 @@ enum Theme {
     }
 
     /// "亮度为 `under` 的底上，要够 `contrast`，文字该落在什么亮度" —— `plateLum` 的反函数。
-    /// `lighter` = 文字在底的亮侧（深底配白字）。物理上做不到就贴到 0 或 1，
-    /// 于是实际对比度低于目标 —— 这是诚实的：那个底给不出更多了。
-    static func textLum(over under: CGFloat, contrast: CGFloat, lighter: Bool) -> CGFloat {
-        let v = lighter ? (under + 0.05) * contrast - 0.05
-                        : (under + 0.05) / contrast - 0.05
+    /// **先比黑与白各自能给出的对比度，谁高用谁**，不按"面板亮还是暗"机械选：
+    /// panelLum ≈ 0.19 这种地方黑字（4.8:1）其实优于白字（4.38:1），机械选会白让一档。
+    /// 物理上做不到就贴到 0 或 1 —— 于是实际对比度低于目标：那个底给不出更多了。
+    static func textLum(over under: CGFloat, contrast target: CGFloat) -> CGFloat {
+        let lighter = contrast(under, 1) >= contrast(under, 0)
+        let v = lighter ? (under + 0.05) * target - 0.05
+                        : (under + 0.05) / target - 0.05
         return min(1, max(0, v))
+    }
+
+    /// 环境有颜色时，文字该取什么色相 —— **它的互补色**。
+    /// 环境接近中性（饱和度低于 `minTintSat`）时返回 nil，文字就用黑白灰：中性最干净，
+    /// 而且**黑与白是亮度区间的两个端点**，任何有彩色在同一亮度下都不可能比它们更极端。
+    static func tintHue(for color: NSColor) -> CGFloat? {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+        (color.usingColorSpace(.deviceRGB) ?? color).getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+        guard s >= minTintSat else { return nil }
+        return (h + 0.5).truncatingRemainder(dividingBy: 1)
+    }
+
+    /// 在"亮度恰好 = lum"的前提下，取该色相能给到的最饱和颜色。
+    /// 亮度是 WCAG 对比度的唯一决定因素，所以换色相**不会动任何对比度数字** ——
+    /// 它买到的不是"更清楚"，而是"面板文字与背景文字不同色"。
+    /// HSB 下亮度 = `b × (1 − (1 − base) × s)`（`base` 是该色相满饱和满明度时的加权亮度），
+    /// 解出满足该亮度的最大饱和度；解不出来（这个亮度该色相够不着）就退回灰。
+    static func tinted(lum: CGFloat, hue: CGFloat) -> NSColor {
+        let base = luminance(NSColor(deviceHue: hue, saturation: 1, brightness: 1, alpha: 1))
+        guard base > 0.01, base < 0.99 else { return grey(lum) }
+        let room = max(0, min(1, (1 - lum) / (1 - base)))
+        let bright = min(1, lum / max(0.01, 1 - (1 - base) * room))
+        // 用 **deviceHue** 构造：上面那条公式在 device 空间下实测精确成立
+        // （预测 0.2220 / 实测 0.2221），换成 calibratedHue 会偏 12%（0.2525 对 0.2828）。
+        return NSColor(deviceHue: hue, saturation: room, brightness: bright, alpha: 1)
+    }
+
+    /// 文字色 = 反解出来的亮度 + （环境有颜色时）它的互补色相。
+    ///
+    /// 有两条路会走到"上色"，它们正是"黑白都不合适"的两种情况：
+    ///   · 环境本身有色（`tint` 非 nil）—— 背景文字与面板文字往往同色，亮度对比已经拉满，
+    ///     能再把两者分开的只剩下色相；
+    ///   · 亮度被夹到了极端（0 或 1）—— 说明这个底连目标对比度都给不出，黑白已经是它的极限。
+    ///     而极端亮度下 `tinted` 只能给出中性色（饱和度解出来是 0），等于没上色 ——
+    ///     所以让出一小档亮度去换色相。
+    /// 让出的对比度很小（`tintRelax`），买到的不是"更清楚"，是"和背景不同色"。
+    static func textColor(over under: CGFloat, contrast target: CGFloat, tint: CGFloat?) -> NSColor {
+        let lum = textLum(over: under, contrast: target)
+        guard let hue = tint else { return grey(lum) }
+        if lum >= 0.999 { return tinted(lum: 1 - tintRelax, hue: hue) }
+        if lum <= 0.001 { return tinted(lum: tintRelax, hue: hue) }
+        return tinted(lum: lum, hue: hue)
     }
 
     /// 色带的一层：色相按状态固定，不透明度钉住，**明度反解**到"带上的字够对比度"。
@@ -189,8 +246,9 @@ enum Theme {
         // 带底真正呈现出来的亮度：按 alpha 混合。calibratedHue 下"明度 ≈ 亮度"这个近似与实测吻合 ——
         // 解出 0.617 时实测带底 0.431，反推面板底 0.204，与独立测到的 0.19~0.20 一致。
         let shown = alpha * brightness + (1 - alpha) * panelLum
-        return (NSColor(calibratedHue: hue, saturation: saturation, brightness: brightness, alpha: alpha),
-                grey(textLum(over: shown, contrast: alertContrast, lighter: false)))
+        // 同样用 deviceHue：上面那句"明度 ≈ 亮度"只在 device 空间成立。
+        return (NSColor(deviceHue: hue, saturation: saturation, brightness: brightness, alpha: alpha),
+                grey(textLum(over: shown, contrast: alertContrast)))
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -218,12 +276,12 @@ enum Theme {
                : (text + 0.05) * contrast - 0.05
     }
 
-    static func palette(for backdrop: CGFloat) -> Palette {
+    static func palette(for backdrop: CGFloat, color: NSColor = .gray) -> Palette {
         // 关键在方向：面板与背景**同向**，不是相反 —— 浅背景配更亮的面板 + 深字，
         // 深背景配更暗的面板 + 白字。方向对了才轮到对比度；方向反了只能靠加不透明度去救，
         // 那正是"遮挡太重"的来源。
         let lightPanel = backdrop > 0.35
-        let fillBase = lightPanel ? NSColor.white : NSColor(calibratedWhite: 0.02, alpha: 1)
+        let fillBase = lightPanel ? NSColor.white : grey(0.02)
         // 不透明度由"要把面板提到/压到目标的亮度"反解 —— 和配色一样是算出来的，不是常量。
         // 背景落在中灰时它提上去，把面板推离中灰；背景已经在两端时它落到 0.50 的下限（用户定的取舍）。
         let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
@@ -231,20 +289,18 @@ enum Theme {
 
         let panelLum = fillAlpha * luminance(fillBase) + (1 - fillAlpha) * backdrop
 
-        // 两级的亮度**由面板底反解**（不再是写死的 0.06 / white / 0.90）。
-        // 深色底面（`lighter`）上解白字，浅色底面上解深字；物理上解不出来就贴极端，
-        // 实际对比度便低于目标 —— 那个底给不出更多了。面板底本身也是反解出来的，
-        // 于是到这里为止，面板上每一层的颜色都只由 backdrop 这一个数决定。
-        let lighter = !lightPanel
-        let primaryLum = textLum(over: panelLum, contrast: primaryContrast, lighter: lighter)
+        // 文字：亮度**由面板底反解**（不再是写死的 0.06 / white / 0.90），黑与白里谁给得多用谁；
+        // 物理上解不出来就贴极端，实际对比度便低于目标 —— 那个底给不出更多了。
+        // 颜色也跟着环境走：**背景明显有色时，文字取它的互补色** —— 亮度不变（对比度分毫不差），
+        // 变的是色相，换来"面板文字与背景文字不同色"；背景中性时返回 nil，文字就是黑白灰。
+        // 面板底本身也是反解出来的，于是面板上每一处都由 backdrop 和它的颜色决定，没有常量。
+        let tint = tintHue(for: color)
+        let primary = textColor(over: panelLum, contrast: primaryContrast, tint: tint)
         // 二级：先看一级**实际**拿到了多少对比度（可能已被夹紧），再按比例退一档 ——
         // 直接解 secondaryContrast 会在暗面板上撞到 1.0 的天花板，两级双双变纯白，层次就没了。
-        let reachable = contrast(panelLum, primaryLum)
-        let secondaryLum = textLum(over: panelLum,
-                                   contrast: min(secondaryContrast, reachable * secondaryRatio),
-                                   lighter: lighter)
-        let primary = grey(primaryLum)
-        let secondary = grey(secondaryLum)
+        let reachable = contrast(panelLum, luminance(primary))
+        let secondary = textColor(over: panelLum,
+                                  contrast: min(secondaryContrast, reachable * secondaryRatio), tint: tint)
 
         // 色带也交给"变色龙"：**色相**按状态固定（黄=别动、绿=可以接手，语义不能变），
         // **明度与字色**都由环境反解，不透明度钉在 0.55（后面的字要能看见）。
@@ -308,7 +364,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 上一次布局出来的面板高度。它一变就立刻重采底图 —— 否则要等下一个采样周期，
     /// 那段窗口里底图是旧尺寸的（被拉伸铺满，内容与当前区域不对应）。
     private var laidOutHeight: CGFloat = -1
-    private var palette: Palette { Theme.palette(for: backdrop) }
+    /// 面板覆盖区域的**平均颜色** —— 只用来判断"这里有没有颜色"，从而决定文字要不要上色。
+    private var backdropColor: NSColor = .gray
+    private var palette: Palette { Theme.palette(for: backdrop, color: backdropColor) }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Look.width, height: 96),
@@ -490,7 +548,10 @@ final class HUD: NSObject, NSApplicationDelegate {
         stepsField.frame = NSRect(x: 0, y: 0, width: innerWidth - 10, height: max(bodyH, stepsH))
         footerField.frame = NSRect(x: Look.inset, y: Look.inset, width: innerWidth, height: footH)
 
-        exportFrame(screen: screen)
+        // 导出几何时用的是**全屏**顶边，不是这里的 `screen` —— 那是 visibleFrame，少了菜单栏那 30 点。
+        // 面板的 NS 坐标以全屏为基准，拿 visibleFrame 去换算，观测工具就会在比面板实际位置
+        // **高 30 点**的矩形里裁图（量出来的数字一直带着这层偏差，查了很久）。
+        exportFrame(screen: (panel.screen ?? NSScreen.main)?.frame ?? screen)
 
         // 面板高度变了：立刻重采底图，别等下一个周期，否则这段时间底图与面板区域不对应。
         if abs(total - laidOutHeight) > 1 {
@@ -525,8 +586,8 @@ final class HUD: NSObject, NSApplicationDelegate {
         // 采样放**后台线程**：ScreenCaptureKit 的 async 调用和 @MainActor 会互等 ——
         // 症状是一条日志都不出、配色永远停在初始值（踩过）。采完再回主线程套用。
         Task.detached { [rect, displayID, exclude, previous, previousSpread, previousSize, size] in
-            guard let (luminance, spread, snapshot) = await Self.capturePanelArea(rect, displayID: displayID,
-                                                                                  excluding: exclude) else {
+            guard let (luminance, spread, meanColor, snapshot) =
+                await Self.capturePanelArea(rect, displayID: displayID, excluding: exclude) else {
                 FileHandle.standardError.write("testhud: sample FAILED\n".data(using: .utf8)!); return }
             // 亮度变化小于 4%、跨度变化小于 0.12、面板尺寸也没变，就不重绘 ——
             // 免得背景稍微一动整个面板跟着抖。跨度也要比：面板从纯色区挪到明暗交界处时
@@ -537,6 +598,7 @@ final class HUD: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.backdrop = luminance
                 self.spread = spread
+                self.backdropColor = meanColor
                 self.sampledSize = size
                 if let snapshot { self.blurView.image = NSImage(cgImage: snapshot, size: .zero) }
                 self.applyPalette()
@@ -545,7 +607,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     }
 
     private static func capturePanelArea(_ rect: CGRect, displayID: CGDirectDisplayID?,
-                                         excluding windowNumber: Int) async -> (CGFloat, CGFloat, CGImage?)? {
+                                         excluding windowNumber: Int) async -> (CGFloat, CGFloat, NSColor, CGImage?)? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first
@@ -568,18 +630,26 @@ final class HUD: NSObject, NSApplicationDelegate {
             let y1 = min(image.height, y0 + max(1, Int(rect.height * k)))
 
             var sum = 0.0, count = 0
-            var hist = [Int](repeating: 0, count: 64)      // 顺带量出这块区域的明暗跨度
+            var sumR = 0.0, sumG = 0.0, sumB = 0.0        // 顺带量出这块区域的颜色
+            var hist = [Int](repeating: 0, count: 64)      // 以及它的明暗跨度
             for y in y0..<y1 {
                 for x in x0..<x1 {
                     let o = y * stride + x * bpp
                     let r = Double(data[o + 2]) / 255, g = Double(data[o + 1]) / 255, b = Double(data[o]) / 255
                     let v = 0.2126 * r + 0.7152 * g + 0.0722 * b
                     sum += v
+                    sumR += r; sumG += g; sumB += b
                     hist[min(63, Int(v * 64))] += 1
                     count += 1
                 }
             }
             let luminance = count > 0 ? sum / Double(count) : 0.5
+            // 这块区域的平均颜色。只用来问一件事：**这里到底有没有颜色。**
+            // 有颜色的背景上，面板文字和背景文字往往是同一个颜色（都是白字或都是黑字），
+            // 亮度对比已经拉满，能再把两层字分开的只剩下色相 —— 文字该取它的互补色。
+            let meanColor = NSColor(calibratedRed: count > 0 ? sumR / Double(count) : 0.5,
+                                    green: count > 0 ? sumG / Double(count) : 0.5,
+                                    blue: count > 0 ? sumB / Double(count) : 0.5, alpha: 1)
             // 覆盖区域的明暗跨度（p10~p90）。这不是个摆设：面板底是半透明的，底图会把这块区域的
             // **大尺度明暗**留在面板上，而面板上的文字只有一个颜色 —— 一边亮一边暗时，无论配深字
             // 还是白字都会有一半失准（实测：同一块面板上底色从 0.51 到 0.31，白字对亮的那半只有 2.5:1）。
@@ -649,7 +719,7 @@ final class HUD: NSObject, NSApplicationDelegate {
                                    format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
                 effective = (0.2126 * Double(px[0]) + 0.7152 * Double(px[1]) + 0.0722 * Double(px[2])) / 255
             }
-            return (effective, spread, blurred)
+            return (effective, spread, meanColor, blurred)
         } catch {
             FileHandle.standardError.write("testhud: SCK error \(error)\n".data(using: .utf8)!)
             return nil
@@ -685,6 +755,11 @@ final class HUD: NSObject, NSApplicationDelegate {
                      + (1 - fill.alphaComponent) * backdrop
         let primaryLum = Theme.luminance(palette.primary)
         let secondaryLum = Theme.luminance(palette.secondary)
+        // 环境色相与"文字到底上没上色" —— 这两条只有导出来才看得见：上色**不改任何对比度数字**，
+        // 所以从截图和对比度上都判断不出它有没有触发。`tintHue = -1` 表示环境是中性、文字用黑白灰。
+        var bgHue: CGFloat = 0, bgSat: CGFloat = 0, bgVal: CGFloat = 0
+        (backdropColor.usingColorSpace(.deviceRGB) ?? backdropColor)
+            .getHue(&bgHue, saturation: &bgSat, brightness: &bgVal, alpha: nil)
         let info: [String: Any] = [
             "updatedAt": Date().timeIntervalSince1970,
             "backdrop": backdrop,
@@ -693,6 +768,8 @@ final class HUD: NSObject, NSApplicationDelegate {
             "panelLum": panelLum,
             "primaryLum": primaryLum,
             "secondaryLum": secondaryLum,
+            "bgHue": bgHue, "bgSat": bgSat,
+            "tintHue": Theme.tintHue(for: backdropColor).map { Double($0) } ?? -1,
             "primaryVsPanel": Theme.contrast(panelLum, primaryLum),
             "secondaryVsPanel": Theme.contrast(panelLum, secondaryLum),
             "panelW": panel.frame.width, "panelH": panel.frame.height,
