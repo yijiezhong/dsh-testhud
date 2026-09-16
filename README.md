@@ -103,11 +103,12 @@ the address bar and the bookmarks bar, and a panel there would cover them. The d
 below that chrome — level with the page's own header. Set it to `0` to get the old behaviour (a 14 pt screen margin),
 or to whatever puts the panel where you want it. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
 
-**Everything is computed from one number.** The panel samples the average luminance of *the rectangle it is about to
-cover* — only that rectangle — every 0.7 s, and immediately whenever the frontmost app changes, the panel resizes, or
-its own content changes (0.5 s debounce). That single value derives the whole appearance: the panel fill and its
-direction, both text colours, the banner's colour and brightness, and the panel's own opacity. There are no two
-presets; there is one formula.
+**Everything is computed from what the panel covers.** Every 0.7 s — and immediately whenever the frontmost app
+changes, the panel resizes, or its own content changes (0.5 s debounce) — it measures *the rectangle it is about to
+cover*, and only that rectangle: its average luminance **and its light/dark spread** (p10–p90). Those numbers derive
+the whole appearance: the panel fill and its direction, the luminance of both text greys, the banner's fill and text,
+the panel's opacity, and how flat the ground is flattened. There are no two presets, and **not one colour on the panel
+is a hard-coded constant**.
 
 The trick is the **direction**: the panel goes *with* the backdrop, not against it — a light backdrop gets a lighter
 panel with dark text, a dark backdrop gets a darker panel with white text. Going the other way (a dark panel over a
@@ -121,28 +122,42 @@ right then*). The floor is therefore **0.50**: on ordinary backdrops the panel's
 region still shows light and shape. On black-on-white text filling the whole screen, that is the limit of "both".
 
 **The panel's ground is a blurred snapshot of what it covers**, taken in the same sampling pass, blurred with σ=34 and
-then flattened (contrast 0.40, saturation 0.70). A fully see-through panel has a failure mode of its own: the text
-underneath stays perfectly legible and fights the panel's own text — same size, similar colour, two layers of type in
-one place. Blurring the ground turns that competing text into soft light and shade: you can still tell *something* is
-there, but it no longer competes. It is the panel equivalent of ground glass.
+desaturated to 0.70. A fully see-through panel has a failure mode of its own: the text underneath stays perfectly
+legible and fights the panel's own text — same size, similar colour, two layers of type in one place. Blurring the
+ground turns that competing text into soft light and shade: you can still tell *something* is there, but it no longer
+competes.
+
+Two things about that ground have to be right, or the panel ends up **choosing text colours for a backdrop that does
+not exist** (this bug took a long time to find). Contrast is compressed **around mid-grey**, so afterwards the image's
+mean is no longer the sampled mean — on a dark backdrop the two differ by a factor of two — and the palette computes
+the panel's own floor from that number. So the mean is **anchored back** to its true value, and that true value is
+**measured** (`CIAreaAverage` rendered to sRGB) rather than derived by formula. The contrast is then scaled by the
+region's **light/dark spread** (p10–p90): the ground keeps the large-scale light and shade, while the panel's text has
+only one colour — a backdrop that is bright on one side and dark on the other leaves half of it wrong whichever
+direction you pick. Flattening adds **no** occlusion (the panel's opacity is untouched); it only costs some of the
+"something is down there" texture.
 
 Contrast is WCAG-style (`(lighter + 0.05) / (darker + 0.05)`), but it is **not solved to the exact bar**: the lesson
 this project paid for is that a paper 7:1 measures only 6.6–6.8 on screen (CJK strokes are thin, and antialiasing lifts
-the measured luminance), so anything solved "just barely" comes out short. The two greys are simply taken to their
-extremes (0.06 / 0.08 on a light panel, white / 0.90 on a dark one); only the banner solves anything — its
-**brightness** is solved so the black text clears 4.5:1, with opacity pinned at 0.55.
+the measured luminance), so anything solved "just barely" comes out short.
+
+**The text luminances are solved too**, not fixed constants: each is derived from the panel floor's actual luminance
+against `primaryContrast` (9) / `secondaryContrast` (7), clamped to black or white when the floor simply cannot give
+that much. The second grey targets "0.91 × the contrast the first one actually reached" — solving both independently
+would pin them both to pure white on a dark panel, and the two-grey split is this panel's only means of hierarchy.
+The banner works the same way: brightness *and* text colour are solved from the environment, opacity pinned at 0.55.
 
 Measured by `bin/testhud-inspect.py` on the geometry the panel exports itself. **Both backdrops are dense real text**,
 not solid colour — a solid backdrop cannot reproduce the failure this panel exists to avoid:
 
-| backdrop | panel | banner | title / step | expect / actual | target / timer |
-|---|---|---|---|---|---|
-| light (the DSH UI in a browser: dark text on white) | light, body 0.93–0.95 | 5.0:1 | **8.0:1** | 6.7:1 | 6.6 / 6.7:1 |
-| dark (a terminal: white text on black) | dark, body 0.18–0.20 | 3.7:1 | 4.9 / 5.0:1 | 4.6:1 | 3.9 / 4.5:1 |
+| backdrop | banner | title / step | expect / actual | target / timer |
+|---|---|---|---|---|
+| light (the DSH UI in a browser: dark text on white) | 6.6:1 | **9.4:1** | 7.2:1 | 7.2 / 7.2:1 |
+| dark (a terminal: white text on black) | 5.8:1 | 7.7 / 7.0:1 | 5.9–6.7:1 | 6.5 / 6.8:1 |
 
-18 pt counts as large text, so WCAG AAA asks 4.5:1. The light backdrop — the everyday case — is 5:1 or better
-everywhere, mostly at AAA's 7:1. Dense dark text is the worst case: 3.7–5.0:1, around the AA large-text bar, and that
-is the price of the 0.50 floor.
+18 pt counts as large text, so WCAG AAA asks 4.5:1. On a light backdrop everything except the banner reaches AAA's
+body-text bar of 7:1. Dense dark text is the worst case at 5.8:1 — still past the AA large-text bar, but short of AAA,
+and that is the price of the 0.50 floor.
 
 Sampling excludes the panel's own window by id, so the panel never hides itself and never flickers.
 
@@ -151,8 +166,8 @@ Sampling excludes the panel's own window by id, so the panel never hides itself 
 The layout follows CRAP deliberately; keep these rules when you edit it:
 
 - **Contrast** — colour carries exactly one meaning (status): the full-width control banner, plus a single coloured
-  character at the head of each step. Everything else is layered with **two** greys (0.06 / 0.08 on a light panel,
-  white / 0.90 on a dark one) and four font weights, never with a second size — every line is `Look.base` (18 pt).
+  character at the head of each step. Everything else is layered with **two** greys (their luminance solved from the
+  panel floor, see above) and four font weights, never with a second size — every line is `Look.base` (18 pt).
   Two greys, not three: on a light ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
 - **Repetition** — one left edge for all content (`Look.inset`), and only three spacing values: 14 pt between groups,
   10 pt between steps, 2–4 pt inside a step.
@@ -161,9 +176,9 @@ The layout follows CRAP deliberately; keep these rules when you edit it:
 - **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose
   between.
 
-Measured in the worst case (dense dark text, see the table above): banner 3.7:1, expect/actual 4.6:1, title 4.9:1.
+Measured in the worst case (dense dark text, see the table above): banner 5.8:1, expect/actual 5.9–6.7:1, title 7.7:1.
 The banner is the weakest element by design — its opacity is pinned at 0.55 so the content behind it stays visible, and
-only its brightness is solved, which measures 3.7–5.0:1 once antialiasing and the translucent stack are counted.
+only its brightness and text colour can compensate; 5.8:1 is that banner's ceiling under those constraints.
 
 Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — and the hierarchy comes from weight alone
 (heavy for the control line, bold for the title and status, semibold for steps, regular for the expect/actual detail).
