@@ -244,6 +244,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 上一次采样的面板尺寸。面板长高/缩短时底图必须重采 —— 只比亮度的话，同一背景下面板变高
     /// 不会触发重采，多出来的下半截就没有模糊覆盖（踩过）。
     private var sampledSize: NSSize = .zero
+    /// 上一次布局出来的面板高度。它一变就立刻重采底图 —— 否则要等下一个 2 秒周期，
+    /// 那段窗口里底图是旧尺寸的（被拉伸铺满，内容与当前区域不对应）。
+    private var laidOutHeight: CGFloat = -1
     private var palette: Palette { Theme.palette(for: backdrop) }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -412,6 +415,12 @@ final class HUD: NSObject, NSApplicationDelegate {
                                    width: innerWidth, height: stepsH)
         stepsField.frame = NSRect(x: 0, y: 0, width: innerWidth - 10, height: max(bodyH, stepsH))
         footerField.frame = NSRect(x: Look.inset, y: Look.inset, width: innerWidth, height: footH)
+
+        // 面板高度变了：立刻重采底图，别等 2 秒周期，否则这段时间底图与面板区域不对应。
+        if abs(total - laidOutHeight) > 1 {
+            laidOutHeight = total
+            refreshTheme()
+        }
 
         if !placed {
             placed = true
