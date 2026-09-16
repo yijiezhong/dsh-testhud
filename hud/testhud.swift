@@ -235,20 +235,30 @@ enum Theme {
         return tinted(lum: lum, hue: hue)
     }
 
-    /// 色带的一层：色相按状态固定，不透明度钉住，**明度反解**到"带上的字够对比度"。
-    /// 明度受色相与 alpha 限制时会达不到目标，所以**带上的字也跟着反解**：
-    /// 用带底**实际**能达到的亮度去算字色，把差额补回来。
-    static func banner(hue: CGFloat, saturation: CGFloat, alpha: CGFloat, panelLum: CGFloat)
-        -> (fill: NSColor, text: NSColor) {
+    /// 色带的一层。**除了色相，其余全部由环境反解**：
+    ///   · **色相**按状态固定（黄＝别动、绿＝可以接手）—— 这是这块浮层存在的首要理由，
+    ///     语义不能漂，所以它是这层里唯一留下来的常量；
+    ///   · **明度**反解到"带上的字够对比度"；受色相与 alpha 限制时达不到目标，
+    ///     所以**带上的字也跟着反解** —— 用带底**实际**能达到的亮度去算字色，把差额补回来；
+    ///   · **饱和度**由环境饱和度决定（见下）；
+    ///   · **字色的色相**跟着环境走（与面板文字同一套规则）。
+    /// 不透明度钉在 0.55 是"能看到后面的文字"那条要求定的，不参与反解。
+    static func banner(hue: CGFloat, baseSaturation: CGFloat, alpha: CGFloat,
+                       panelLum: CGFloat, envSat: CGFloat, tint: CGFloat?) -> (fill: NSColor, text: NSColor) {
+        // 饱和度：环境本身有色时降一点 —— 一条满饱和的带子压在彩色背景上，两种颜色会互相打架
+        // （那是视觉噪音，不是信息）；环境中性时保持满饱和，那时它得独自承担全部辨识度。
+        let sat = max(0.25, baseSaturation * (1 - 0.5 * min(1, envSat)))
+        // 给定的色相与饱和度下，"明度 = 1" 时这层颜色本身的亮度。
+        // HSB 下亮度 = b × (1 − (1 − base) × s)，在 device 空间实测精确成立，所以可以反解。
+        let scale = 1 - (1 - luminance(NSColor(deviceHue: hue, saturation: 1, brightness: 1, alpha: 1))) * sat
         let floor = plateLum(text: bannerSeedText, contrast: bannerSeedContrast, darker: false)
+        // 带底**呈现**出来要够 `floor`；`needed` 是它在 alpha 混合之前应有的亮度。
         let needed = (floor - (1 - alpha) * panelLum) / max(0.05, alpha)
-        let brightness = min(1.0, max(0.30, needed))
-        // 带底真正呈现出来的亮度：按 alpha 混合。calibratedHue 下"明度 ≈ 亮度"这个近似与实测吻合 ——
-        // 解出 0.617 时实测带底 0.431，反推面板底 0.204，与独立测到的 0.19~0.20 一致。
-        let shown = alpha * brightness + (1 - alpha) * panelLum
-        // 同样用 deviceHue：上面那句"明度 ≈ 亮度"只在 device 空间成立。
-        return (NSColor(deviceHue: hue, saturation: saturation, brightness: brightness, alpha: alpha),
-                grey(textLum(over: shown, contrast: alertContrast)))
+        let brightness = min(1.0, max(0.30, needed / max(0.05, scale)))
+        // 呈现亮度得按**实际的色相与饱和度**算，不能再拿明度近似 —— 饱和度一降，同样的明度更亮。
+        let shown = alpha * brightness * scale + (1 - alpha) * panelLum
+        return (NSColor(deviceHue: hue, saturation: sat, brightness: brightness, alpha: alpha),
+                textColor(over: shown, contrast: alertContrast, tint: tint))
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -295,6 +305,9 @@ enum Theme {
         // 变的是色相，换来"面板文字与背景文字不同色"；背景中性时返回 nil，文字就是黑白灰。
         // 面板底本身也是反解出来的，于是面板上每一处都由 backdrop 和它的颜色决定，没有常量。
         let tint = tintHue(for: color)
+        // 环境饱和度 —— 色带的饱和度由它决定（环境有色时色带降饱和，免得两种颜色打架）。
+        var envSat: CGFloat = 0, envVal: CGFloat = 0
+        (color.usingColorSpace(.deviceRGB) ?? color).getHue(nil, saturation: &envSat, brightness: &envVal, alpha: nil)
         let primary = textColor(over: panelLum, contrast: primaryContrast, tint: tint)
         // 二级：先看一级**实际**拿到了多少对比度（可能已被夹紧），再按比例退一档 ——
         // 直接解 secondaryContrast 会在暗面板上撞到 1.0 的天花板，两级双双变纯白，层次就没了。
@@ -302,11 +315,13 @@ enum Theme {
         let secondary = textColor(over: panelLum,
                                   contrast: min(secondaryContrast, reachable * secondaryRatio), tint: tint)
 
-        // 色带也交给"变色龙"：**色相**按状态固定（黄=别动、绿=可以接手，语义不能变），
-        // **明度与字色**都由环境反解，不透明度钉在 0.55（后面的字要能看见）。
+        // 色带也交给"变色龙"：**只有色相是常量**（黄=别动、绿=可以接手，语义不能漂），
+        // 饱和度、明度、字色全部由环境反解，不透明度钉在 0.55（后面的字要能看见）。
         // 明度不够就调明度，而不是一路加不透明度（那样会变成一条不透光的色纸）。
-        let (runBase, runFg) = banner(hue: 0.14, saturation: 1.00, alpha: bannerAlpha, panelLum: panelLum)
-        let (doneBase, doneFg) = banner(hue: 0.38, saturation: 0.85, alpha: bannerAlpha, panelLum: panelLum)
+        let (runBase, runFg) = banner(hue: 0.14, baseSaturation: 1.00, alpha: bannerAlpha,
+                                      panelLum: panelLum, envSat: envSat, tint: tint)
+        let (doneBase, doneFg) = banner(hue: 0.38, baseSaturation: 0.85, alpha: bannerAlpha,
+                                        panelLum: panelLum, envSat: envSat, tint: tint)
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
@@ -760,6 +775,12 @@ final class HUD: NSObject, NSApplicationDelegate {
         var bgHue: CGFloat = 0, bgSat: CGFloat = 0, bgVal: CGFloat = 0
         (backdropColor.usingColorSpace(.deviceRGB) ?? backdropColor)
             .getHue(&bgHue, saturation: &bgSat, brightness: &bgVal, alpha: nil)
+        var bannerSat: CGFloat = 0, bannerVal: CGFloat = 0
+        (palette.alertRunBg.usingColorSpace(.deviceRGB) ?? palette.alertRunBg)
+            .getHue(nil, saturation: &bannerSat, brightness: &bannerVal, alpha: nil)
+        // 带底**呈现**出来的亮度（alpha 混合之后）—— 带上的字是对着它反解的。
+        let bannerShown = palette.alertRunBg.alphaComponent * Theme.luminance(palette.alertRunBg)
+                        + (1 - palette.alertRunBg.alphaComponent) * panelLum
         let info: [String: Any] = [
             "updatedAt": Date().timeIntervalSince1970,
             "backdrop": backdrop,
@@ -770,6 +791,13 @@ final class HUD: NSObject, NSApplicationDelegate {
             "secondaryLum": secondaryLum,
             "bgHue": bgHue, "bgSat": bgSat,
             "tintHue": Theme.tintHue(for: backdropColor).map { Double($0) } ?? -1,
+            // 色带：饱和度、明度、字色亮度 —— 同样是算出来的，同样只有导出来才看得见。
+            "bannerSat": bannerSat, "bannerVal": bannerVal,
+            "bannerFgLum": Theme.luminance(palette.alertRunFg),
+            // 字对的是**混合之后**的带底，不是带底颜色本身 —— 带子是半透明的，
+            // 拿未混合的颜色去比会低估一大截（实测 3.55 对真实 6.5），这是口径问题不是算法问题。
+            "bannerShown": bannerShown,
+            "bannerFgVsBanner": Theme.contrast(bannerShown, Theme.luminance(palette.alertRunFg)),
             "primaryVsPanel": Theme.contrast(panelLum, primaryLum),
             "secondaryVsPanel": Theme.contrast(panelLum, secondaryLum),
             "panelW": panel.frame.width, "panelH": panel.frame.height,
