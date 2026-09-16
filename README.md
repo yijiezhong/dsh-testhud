@@ -54,6 +54,9 @@ the header stays fixed, and disappears 12 seconds after `done` — long enough t
 runs, `start` again after a `done` and before the next action. Whoever is waiting must be able to see what is being
 tested and whether it is safe to take back the keyboard.
 
+**Clean up afterwards too**: `done` at the end, then **quit the app you launched for the test** (gracefully, not
+`kill -9`) and bring the browser / DSH window back to the front. Do not leave the app under test sitting on screen.
+
 ## The CLI
 
 Same logic, same progress file, for shell scripts and CI:
