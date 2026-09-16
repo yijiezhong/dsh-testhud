@@ -147,6 +147,26 @@ that much. The second grey targets "0.91 × the contrast the first one actually 
 would pin them both to pure white on a dark panel, and the two-grey split is this panel's only means of hierarchy.
 The banner works the same way: brightness *and* text colour are solved from the environment, opacity pinned at 0.55.
 
+**The colour is solved too, black and white first:**
+
+1. **Whichever of black and white gives more wins** — the two are compared by the contrast each reaches against the
+   panel floor, rather than picked by "is the panel light or dark". Around panelLum ≈ 0.19, black (4.8:1) actually
+   beats white (4.38:1).
+2. **A neutral environment gets neutral text**: below `minTintSat` (0.15) saturation the text stays greyscale. That is
+   the cleanest choice, and black and white are the **endpoints of the luminance range** — no chromatic colour can be
+   more extreme at the same luminance.
+3. **A coloured environment gets its complement** (opposite on the colour wheel). The luminance does not change, so
+   **no contrast figure moves**. What the hue buys is not "clearer" but "the panel's text and the text underneath are
+   no longer the same colour" — and a coloured backdrop is exactly where that happens: two layers of type in one
+   colour, brightness already maxed out, hue the only thing left to separate them.
+4. **When the luminance is clamped to an endpoint** — meaning the floor cannot even give the target contrast, so black
+   and white are already its limit — `tintRelax` (0.05) of luminance is spent to buy a hue. At a clamped luminance no
+   hue solves to any saturation at all, which would amount to not tinting.
+
+Measured on a full screen of solid orange (saturation 0.727): the text took the complementary cyan at 202°, and the
+panel's brightest 2% of pixels `(218,239,251)` measured R−B = −33 while the backdrop's R sits well above its B. The
+price is white text falling from 5.24:1 to 4.62:1.
+
 Measured by `bin/testhud-inspect.py` on the geometry the panel exports itself. **Both backdrops are dense real text**,
 not solid colour — a solid backdrop cannot reproduce the failure this panel exists to avoid:
 
