@@ -392,6 +392,9 @@ final class HUD: NSObject, NSApplicationDelegate {
     private var lastContentFingerprint = ""
     private var lastSampleAt: TimeInterval = 0
     private var placed = false
+    /// 色带的拖拽把手（见 `DragHandle`）。它是**独立的一个小窗口** —— 面板本身必须整体保持
+    /// 鼠标穿透，那种"只有色带能抓"的效果没法用一个窗口做到（`ignoresMouseEvents` 是窗口级的）。
+    private var dragHandle: DragHandle!
     /// 当前用哪套配色。默认按"浅背景"起手，第一次采样之后就会纠正。
     /// 最后一次量到的背景亮度 —— 整套配色（颜色 + 四个透明度）都由它推出来。
     /// 最后一次量到的背景亮度。-1 是"还没量过"的哨兵 —— 用 0.95 之类当初始值会让第一次采样
@@ -476,6 +479,27 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         applyPalette()
         panel.orderFrontRegardless()
+
+        // 色带的拖拽把手。几何由 `layout()` 每帧同步到色带矩形（色带藏起来时高度为 0，
+        // 把手自然就抓不到东西），这里只负责把它建出来并压在最上面。
+        dragHandle = DragHandle(contentRect: .zero,
+                                styleMask: [.nonactivatingPanel, .borderless],
+                                backing: .buffered, defer: false)
+        dragHandle.isOpaque = false
+        // 不是 `.clear`：完全透明的窗口在窗口服务器眼里"没有可点的东西"，鼠标事件会被跳过。
+        // 0.01 的白肉眼看不出来（色带正好整条盖在上面），但让这个窗口在 hit-test 里是实心的。
+        dragHandle.backgroundColor = NSColor(white: 1, alpha: 0.01)
+        dragHandle.hasShadow = false
+        dragHandle.level = .screenSaver
+        dragHandle.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // 事件必须由一个 **view** 接住。NSWindow 本身也是 NSResponder，但鼠标事件是先发给
+        // hit-tested 的那个 view，而 view 默认的 `mouseDown` 不会自动上溯到窗口 —— 把 `mouseDragged`
+        // 写在窗口上，拖动会**毫无反应**：窗口建对了、位置分毫不差、辅助功能权限也有，就是拖不动。
+        // （第一版就踩了这个，查窗口列表和权限花了一轮。）
+        let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: Look.width, height: 40))
+        grip.host = panel
+        dragHandle.contentView = grip
+        dragHandle.orderFrontRegardless()
         // 显示之前先量一次：第一帧就是对的，不闪。
         refreshTheme()
         // 0.7 秒：底图是"面板下方此刻的样子"，周期越短越追得上正在变化的背景。
@@ -606,6 +630,14 @@ final class HUD: NSObject, NSApplicationDelegate {
             panel.setFrameOrigin(origin(for: NSSize(width: Look.width, height: total), on: screen))
         } else {
             panel.setFrameOrigin(NSPoint(x: panel.frame.origin.x, y: oldTop - total))
+        }
+        // 把手跟着面板走：色带在**屏幕**坐标里的位置 = 面板顶边往下 `alertH` 那一条。
+        // （`alertBand.frame` 是面板内部坐标，这里要从 `panel.frame` 反推。）
+        // 拖动过程中这个同步不会和拖动打架 —— 它读的就是已经被拖到的位置，只是把把手对齐上去。
+        if let handle = dragHandle {
+            let band = NSRect(x: panel.frame.minX, y: panel.frame.maxY - alertH,
+                              width: Look.width, height: max(0, alertH))
+            if handle.frame != band { handle.setFrame(band, display: false) }
         }
         panel.invalidateShadow()
     }
@@ -1039,6 +1071,91 @@ final class HUD: NSObject, NSApplicationDelegate {
             out.append(NSRect(x: x, y: screenTop - y - height, width: width, height: height))
         }
         return out
+    }
+}
+
+/// 把手事件的诊断日志（写在 `~/.dsh/dsh-testhud/drag.log`）。
+/// 排障用的：窗口在位、位置分毫不差、辅助功能权限也是 true，拖动却毫无反应 ——
+/// 只有日志能分辨"事件根本没到窗口"和"到了但位移算错"。留在代码里，下次不用重查一遍。
+func dragLog(_ text: String) {
+    let dir = NSHomeDirectory() + "/.dsh/dsh-testhud"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let path = dir + "/drag.log"
+    let line = "\(Date().timeIntervalSince1970) \(text)\n"
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile()
+        handle.write(line.data(using: .utf8)!)
+        handle.closeFile()
+    } else {
+        try? line.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+}
+
+/// 色带的拖拽把手 —— 一个**只盖住色带那一条**的透明窗口。
+///
+/// 为什么不直接在面板上开关鼠标：`ignoresMouseEvents` 是**窗口级**的，macOS 没有"这块穿透、
+/// 那块不穿透"的写法。而面板必须整体保持穿透 —— 它要压在被测界面之上，一旦开始吃点击，
+/// 底下那个应用就没法操作了，而这是这个浮层存在的前提。所以"抓得住"只能由另一个窗口提供。
+///
+/// 代价要说清楚：**色带那一条从此不再穿透**。拖到色带上会抓住它移动整个面板，而不是点到底下的应用。
+/// 这就是用户要的手动定位能力，换来的是色带上损失一条点击区（约 40 点高、740 点宽）。
+final class DragHandle: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// 把手的 contentView —— 真正接住鼠标的地方（为什么不能写在窗口上，见 `DragHandle` 的注释）。
+final class DragGrip: NSView {
+    /// 被拖动的主面板。弱引用：把手是面板的附属物，面板没了它不该继续留着。
+    weak var host: NSWindow?
+
+    /// **这个必须返回 true，否则一次都拖不动。**
+    /// app 是 `.accessory`、窗口是 `.nonactivatingPanel` —— 它永远不会成为 key window，
+    /// 于是每一次点击在 AppKit 眼里都是 "first mouse"：默认会被吞掉，只用于"激活"一个
+    /// 本来就不需要激活的窗口。前面查窗口位置、查辅助功能权限全都是白查，就卡在这一行。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// 上一次鼠标的**全局**位置 —— 位移靠它自己算，不用 `event.deltaX/deltaY`。
+    ///
+    /// 为什么不用 `delta`：合成事件（CGEvent，自动化测试就是用它发的）里 delta 恒为 **0**，
+    /// 只有真人拖动才有值。于是会掉进最难查的那种状态 —— 真人能用、自动化永远拖不动，
+    /// 或者反过来。自己算差值，两条路都对。
+    ///
+    /// 为什么用 `NSEvent.mouseLocation` 而不是 `event.locationInWindow`：后者是**窗口内**坐标，
+    /// 而拖动时窗口自己也在动，鼠标没动也会算出位移，正反馈一路跑飞。
+    /// `mouseLocation` 是全局屏幕坐标，和 `setFrameOrigin` 用的是同一套坐标系，不受窗口移动影响。
+    private var lastPoint: NSPoint = .zero
+
+    /// 必须实现。不实现的话 AppKit 不认为这个 view 参与了本次拖拽，
+    /// 后续的 `mouseDragged` 一次都不会来（只写 dragged 不写 down 同样拖不动）。
+    override func mouseDown(with event: NSEvent) {
+        lastPoint = NSEvent.mouseLocation
+        dragLog("mouseDown global=\(lastPoint)")
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastPoint = .zero
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        // **这一行是兜底，必须有。** 如果这次拖拽的 mouseUp 没能回到这个 view（合成的鼠标事件、
+        // 鼠标滑出把手、窗口被挪走都会），AppKit 会把之后**所有**的鼠标移动继续当成 dragged 发过来 ——
+        // 于是一个字都没按，鼠标一动面板就跟着跑，一路滑出屏幕（实测掉到 x=-121，屏幕都出不去）。
+        // 每帧直接问硬件"左键还按着吗"，比信任事件关联可靠得多。
+        guard NSEvent.pressedMouseButtons & 0x1 == 1 else {
+            lastPoint = .zero
+            return
+        }
+        let now = NSEvent.mouseLocation
+        let dx = now.x - lastPoint.x, dy = now.y - lastPoint.y
+        lastPoint = now
+        guard let host = host, let handle = window else { return }
+        // 相对拖动：面板跟着鼠标的位移走，不需要记"抓在哪个点"。
+        host.setFrameOrigin(NSPoint(x: host.frame.origin.x + dx, y: host.frame.origin.y + dy))
+        // 把手当场跟上，不等下一次 `layout()`（最多 0.4 秒后）：否则拖动时把手会明显"掉队"，
+        // 看起来像色带没跟着面板走。（拖拽期间事件是锁定在这个 view 上的，鼠标跑出把手也不会断。）
+        handle.setFrameOrigin(NSPoint(x: host.frame.minX, y: host.frame.maxY - handle.frame.height))
+        dragLog("dragged d=(\(dx),\(dy)) host=\(host.frame.origin)")
     }
 }
 

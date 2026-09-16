@@ -23,6 +23,8 @@ This panel answers exactly that, on screen, without stealing focus:
   stays readable, and only the brightness is solved, to keep the black text at 4.5:1.
 - **It never gets in the way**: click-through (the mouse passes straight through), always on top, not in the Dock
   and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
+- **Move it by hand**: grab the top colour band and drag to put the panel wherever suits you. That band is the only part
+  that is not click-through — it is the drag handle; everything below it still passes the mouse straight through.
 
 ## Install
 
@@ -288,8 +290,9 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 
 - **One panel per machine.** The progress file is a single well-known path, so two concurrent test runs share one panel —
   the last writer wins.
-- The panel is click-through by design, so it cannot be moved or dismissed with the mouse: use `anchor` to steer it,
-  `stop` / `done` to make it go away.
+- The panel is click-through by design, with **one exception: the top colour band**, which is the drag handle — without
+  it there would be no way to move the panel by hand. So a mouse landing on the band grips the panel instead of the app
+  underneath; `stop` / `done` make it go away.
 - On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the
   top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
 - **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it falls
