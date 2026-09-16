@@ -159,12 +159,13 @@ enum Theme {
     /// 上色时为色相让出的亮度（0~1）。色相不改善任何对比度数字，所以只让很小一档：
     /// 实测在 panelLum 0.15 的底上，白字从 5.24:1 退到 4.95:1，仍高过大字 AA 的 4.5。
     static let tintRelax: CGFloat = 0.05
-    /// 色带上文字的对比目标。字色现在也是反解出来的，**不必再迁就 0.06 那个旧常量**：
-    /// 解出来的字更黑，白送的对比度就该拿（实测深色密集文字背景上，色带从 3.7:1 提到 6.5:1）。
-    static let alertContrast: CGFloat = 6.5
     /// 解色带明度时假定的"字有多黑"与目标 —— 这一层只决定**色带该多亮**，不决定最终字色。
     static let bannerSeedText: CGFloat = 0.06
     static let bannerSeedContrast: CGFloat = 4.5
+    /// 色带底与面板底的**最小对比度**：带子必须"一眼看到"，不能只剩一层色相差。
+    /// 1.25 是"能分辨"，1.5 是"一眼看到"（用户选的 1.5）。
+    /// 这条约束独立于"带上的字够不够对比" —— 那是两回事，字够亮不等于带子看得见。
+    static let bannerVsPanel: CGFloat = 1.5
     /// 色带的不透明度：钉住不动（用户要求"能看到后面的文字"）；明度不够时去调明度。
     static let bannerAlpha: CGFloat = 0.55
 
@@ -254,9 +255,28 @@ enum Theme {
         let floor = plateLum(text: bannerSeedText, contrast: bannerSeedContrast, darker: false)
         // 带底**呈现**出来要够 `floor`；`needed` 是它在 alpha 混合之前应有的亮度。
         let needed = (floor - (1 - alpha) * panelLum) / max(0.05, alpha)
-        let brightness = min(1.0, max(0.30, needed / max(0.05, scale)))
+        var brightness = min(1.0, max(0.30, needed / max(0.05, scale)))
         // 呈现亮度得按**实际的色相与饱和度**算，不能再拿明度近似 —— 饱和度一降，同样的明度更亮。
-        let shown = alpha * brightness * scale + (1 - alpha) * panelLum
+        var shown = alpha * brightness * scale + (1 - alpha) * panelLum
+
+        // 第二条约束：**带子自己得看得出来**。字够对比只是个必要条件 —— 面板底恰好落在
+        // "带上的字所需那个亮度"附近时，带底与面板底几乎同亮，色带就只剩一层色相差
+        // （中灰场景曾算出 1.01:1，那时带子等于不存在，只剩一条说不清的色带）。
+        // 不满足就从面板底往外推：先往上推（带子更亮），推不动（会超过 1）再往下推。
+        if contrast(shown, panelLum) < bannerVsPanel {
+            let up = bannerVsPanel * (panelLum + 0.05) - 0.05
+            let down = (panelLum + 0.05) / bannerVsPanel - 0.05
+            let target = up <= 0.98 ? max(shown, up) : min(shown, down)
+            let b = min(1.0, max(0.30, (target - (1 - alpha) * panelLum) / max(0.05, alpha * scale)))
+            let pushed = alpha * b * scale + (1 - alpha) * panelLum
+            // **只在真的推上去了才采用**。明度被夹紧时（两个方向都推不动）这一推可能反而
+            // 把带子推向面板底 —— 实测模拟 3:1 时对比度从 1.65 掉到 0.62，比不改还差。
+            // 约束的语义是"至少 1.5"，做不到时保持原样，而不是把情况弄糟。
+            if contrast(pushed, panelLum) > contrast(shown, panelLum) {
+                brightness = b
+                shown = pushed
+            }
+        }
         // 带上的字**直接用黑或白**，不做"解到刚好"的反解，也不上色。
         // 带底的亮度本来就是被有意推到"够亮"的，所以纯黑在这里永远可行、而且对比更高 ——
         // 实测带底呈现 0.462 时，纯黑给 10.2:1，而"解到刚好"只有 6.5:1，白白亏掉 3.7:1。
