@@ -244,7 +244,7 @@ enum Theme {
     ///   · **字色的色相**跟着环境走（与面板文字同一套规则）。
     /// 不透明度钉在 0.55 是"能看到后面的文字"那条要求定的，不参与反解。
     static func banner(hue: CGFloat, baseSaturation: CGFloat, alpha: CGFloat,
-                       panelLum: CGFloat, envSat: CGFloat, tint: CGFloat?) -> (fill: NSColor, text: NSColor) {
+                       panelLum: CGFloat, envSat: CGFloat) -> (fill: NSColor, text: NSColor) {
         // 饱和度：环境本身有色时降一点 —— 一条满饱和的带子压在彩色背景上，两种颜色会互相打架
         // （那是视觉噪音，不是信息）；环境中性时保持满饱和，那时它得独自承担全部辨识度。
         let sat = max(0.25, baseSaturation * (1 - 0.5 * min(1, envSat)))
@@ -257,8 +257,12 @@ enum Theme {
         let brightness = min(1.0, max(0.30, needed / max(0.05, scale)))
         // 呈现亮度得按**实际的色相与饱和度**算，不能再拿明度近似 —— 饱和度一降，同样的明度更亮。
         let shown = alpha * brightness * scale + (1 - alpha) * panelLum
-        return (NSColor(deviceHue: hue, saturation: sat, brightness: brightness, alpha: alpha),
-                textColor(over: shown, contrast: alertContrast, tint: tint))
+        // 带上的字**直接用黑或白**，不做"解到刚好"的反解，也不上色。
+        // 带底的亮度本来就是被有意推到"够亮"的，所以纯黑在这里永远可行、而且对比更高 ——
+        // 实测带底呈现 0.462 时，纯黑给 10.2:1，而"解到刚好"只有 6.5:1，白白亏掉 3.7:1。
+        // 把面板文字那套"解到刚好目标"搬到这里是错的：面板底可能落在任何亮度，带底不会。
+        let ink = contrast(shown, 0) >= contrast(shown, 1) ? grey(0) : NSColor.white
+        return (NSColor(deviceHue: hue, saturation: sat, brightness: brightness, alpha: alpha), ink)
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -318,10 +322,13 @@ enum Theme {
         // 色带也交给"变色龙"：**只有色相是常量**（黄=别动、绿=可以接手，语义不能漂），
         // 饱和度、明度、字色全部由环境反解，不透明度钉在 0.55（后面的字要能看见）。
         // 明度不够就调明度，而不是一路加不透明度（那样会变成一条不透光的色纸）。
-        let (runBase, runFg) = banner(hue: 0.14, baseSaturation: 1.00, alpha: bannerAlpha,
-                                      panelLum: panelLum, envSat: envSat, tint: tint)
-        let (doneBase, doneFg) = banner(hue: 0.38, baseSaturation: 0.85, alpha: bannerAlpha,
-                                        panelLum: panelLum, envSat: envSat, tint: tint)
+        // **方案 1 的色相**：琥珀 0.10（别动）与青绿 0.45（可以接手）。原来的 0.14 / 0.38 只隔 0.24，
+        // 而黄与绿恰好是绿色盲最容易混淆的一对；拉到 0.35 之后好分辨得多，而且
+        // 青绿的 RGB 是 (0, 1, 0.7)，看着仍偏绿 —— "绿=可以走"的语义保住了。
+        let (runBase, runFg) = banner(hue: 0.10, baseSaturation: 1.00, alpha: bannerAlpha,
+                                      panelLum: panelLum, envSat: envSat)
+        let (doneBase, doneFg) = banner(hue: 0.45, baseSaturation: 0.85, alpha: bannerAlpha,
+                                        panelLum: panelLum, envSat: envSat)
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
