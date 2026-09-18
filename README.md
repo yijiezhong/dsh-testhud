@@ -30,7 +30,9 @@ This panel answers exactly that, on screen, without stealing focus:
   down to just the band (click again to restore), **green** expands it to the maximum height (click again to go back
   to the content height). So it can be put away or enlarged with the mouse, without going back to the tool. Their
   colours deliberately stay out of the chameleon algorithm — red/amber/green are what people recognise, and a dot
-  that recolours itself with the backdrop stops being recognisable.
+  that recolours itself with the backdrop stops being recognisable. Each dot now carries a **1.5 pt dark stroke**
+  (added 2026-09-18): once the band became vivid red / green, the red dot on the red band — and the green dot on the
+  green band — dissolved into it (measured: band vs red dot was **1.03:1**, i.e. the dot could not be found).
 
 ## Install
 
@@ -169,9 +171,12 @@ The opacity is **0.75**. At 0.55 "vivid red" simply does not exist — measured,
 with saturation 0.47; at 0.75 it is `RGB(239,98,85)` with saturation 0.65 (light backdrop). The cost is that the few
 lines under the bar go from "clearly readable" to "dimly visible" — the trade-off the user picked on the spot
 (0.85 is the next step: more vivid, but the text under the bar ends up essentially covered).
-**Known side effect (not handled yet)**: the red dot at the bar's left end collides with the vivid red band (measured
-red dot `RGB(242,96,82)` against a band of `RGB(213,70,56)` — only 11% apart in brightness), and the green dot dims on
-the green band; the yellow dot stays clear in both states.
+**The side effect, and its fix (same day, 2026-09-18)**: each dot gets a **1.5 pt dark stroke**, with the frame grown
+to the outer diameter (15 pt) so the stroke sits *outside* the 12 pt colour — the coloured part loses nothing. The red
+dot's distinguishability from the band went from **1.03:1** to **4.44:1** (dot against ring) / **4.57:1** (ring against
+band); the green dot on the green band behaves the same (ring vs band 5.0:1). A constant dark stroke suffices: the
+band's saturation and brightness are pinned at 1.0, so its shown luminance only spans 0.21–0.74, where dark is past
+5:1 in every case.
 
 **The bar's text is plain black or white** — no "solve to exactly the target", no tinting. The bar's brightness is
 deliberately pushed up to "bright enough", so pure black is always available there and always higher contrast: with the

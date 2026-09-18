@@ -1347,6 +1347,22 @@ final class TrafficLights: NSView {
     static let diameter: CGFloat = 12
     static let gap: CGFloat = 8
     static let leading: CGFloat = 14
+
+    /// 圆点的**深色描边**（2026-09-18 加）。
+    ///
+    /// 起因：色带固定成鲜红 / 鲜绿之后，红点落在鲜红底上、绿点落在鲜绿底上会融成一片 ——
+    /// 实测红点 `RGB(242,96,82)` 对底色 `RGB(213,70,56)`，亮度只差 11%，等于看不见（而红点是关掉
+    /// 浮层的唯一鼠标入口）；done 态的绿点也从"清楚"退成"勉强看得出"。黄点两态都没事。
+    ///
+    /// 描边用**恒定深色**即可，不需要跟着底色换：色带的饱和度与明度钉死在 1.0（见 `vividBanner`），
+    /// 所以它的呈现亮度只可能落在 0.21~0.74 这一段（随面板底的明暗浮动），深色在这整段上的对比度
+    /// 是 5.2:1 ~ 15.8:1 —— 都够。只有两个圆点颜色本身就够醒目的情形（黄点）才不需要它，
+    /// 但三颗点必须长得一样，否则"红黄绿"这组语义就散了。
+    private static let strokeWidth: CGFloat = 1.5
+    private static let strokeColor = NSColor.black.withAlphaComponent(0.85)
+    /// 含描边的外径。frame 要用这个尺寸（见 `layoutDots`）。
+    static var outerDiameter: CGFloat { diameter + 2 * strokeWidth }
+
     /// 圆点总共占掉色带左边多宽 —— 色带文字要从这里往右开始排。
     static var reservedWidth: CGFloat { leading + diameter * 3 + gap * 2 + 12 }
 
@@ -1396,12 +1412,18 @@ final class TrafficLights: NSView {
     /// 圆点于是永远透明。frame 一直是对的，只是眼睛看不见（查了三轮才落到这一行上）。
     private func layoutDots() {
         let step = Self.diameter + Self.gap
+        // frame 取**外径**，位置向左、向上各让出描边宽度 —— 于是描边长在外面，彩色圆的圆心与
+        // 半径分毫不动。（踩过：直接把 border 加在 12 点的框上，`CALayer` 的 border 是**向内**画的，
+        // 会吃掉 3 点直径 —— 实测色块从 452 px 缩到 216 px，肉眼就是"圆点变小了"。）
+        let outer = Self.outerDiameter
         for (i, dot) in dots.enumerated() {
-            dot.frame = NSRect(x: Self.leading + CGFloat(i) * step,
-                               y: (bounds.height - Self.diameter) / 2,
-                               width: Self.diameter, height: Self.diameter)
+            dot.frame = NSRect(x: Self.leading + CGFloat(i) * step - Self.strokeWidth,
+                               y: (bounds.height - outer) / 2,
+                               width: outer, height: outer)
             dot.layer?.backgroundColor = Self.colors[i].cgColor
-            dot.layer?.cornerRadius = Self.diameter / 2
+            dot.layer?.cornerRadius = outer / 2
+            dot.layer?.borderWidth = Self.strokeWidth
+            dot.layer?.borderColor = Self.strokeColor.cgColor
         }
     }
 
