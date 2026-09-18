@@ -30,9 +30,9 @@ This panel answers exactly that, on screen, without stealing focus:
   down to just the band (click again to restore), **green** expands it to the maximum height (click again to go back
   to the content height). So it can be put away or enlarged with the mouse, without going back to the tool. Their
   colours deliberately stay out of the chameleon algorithm — red/amber/green are what people recognise, and a dot
-  that recolours itself with the backdrop stops being recognisable. Each dot now carries a **1.5 pt dark stroke**
-  (added 2026-09-18): once the band became vivid red / green, the red dot on the red band — and the green dot on the
-  green band — dissolved into it (measured: band vs red dot was **1.03:1**, i.e. the dot could not be found).
+  that recolours itself with the backdrop stops being recognisable. Each dot now carries a **1.0 pt white stroke**
+  (added 2026-09-18, the version the user picked out of four): once the band became vivid red / green, the red dot on
+  the red band dissolved into it (measured: band vs red dot was **1.03:1**).
 
 ## Install
 
@@ -171,12 +171,20 @@ The opacity is **0.75**. At 0.55 "vivid red" simply does not exist — measured,
 with saturation 0.47; at 0.75 it is `RGB(239,98,85)` with saturation 0.65 (light backdrop). The cost is that the few
 lines under the bar go from "clearly readable" to "dimly visible" — the trade-off the user picked on the spot
 (0.85 is the next step: more vivid, but the text under the bar ends up essentially covered).
-**The side effect, and its fix (same day, 2026-09-18)**: each dot gets a **1.5 pt dark stroke**, with the frame grown
-to the outer diameter (15 pt) so the stroke sits *outside* the 12 pt colour — the coloured part loses nothing. The red
-dot's distinguishability from the band went from **1.03:1** to **4.44:1** (dot against ring) / **4.57:1** (ring against
-band); the green dot on the green band behaves the same (ring vs band 5.0:1). A constant dark stroke suffices: the
-band's saturation and brightness are pinned at 1.0, so its shown luminance only spans 0.21–0.74, where dark is past
-5:1 in every case.
+**The collision, and what was left of it (2026-09-18)**: each dot got a stroke, and **four versions were measured the
+same day** — ring against band, light / dark backdrop: 1.5 pt black 0.85 → 4.57 / ~7.0 (best, but the user found the
+black edge ugly); 1.0 pt black 0.75 → 3.22 / 1.97 (fails on dark); 1.0 pt black 1.0 → 11.21 / 7.00 (best numbers, but
+still black); **1.0 pt white → 2.39 / 3.11 ← adopted** (the user wanted white and knowingly accepted the cost).
+
+Two physical facts worth keeping: **contrast is set by the colour, not the stroke width** — a thinner white stroke is
+not clearer, just less visible; and because the band is always a highly saturated light colour (saturation and
+brightness pinned at 1.0), a dark stroke is **always 3× the white one** on this band.
+**What is left**: on a light backdrop the red dot still sits at 2.39:1 against the band, so "click the red dot to close
+the panel" is effectively unavailable there (use the CLI `stop` / `done` instead). This is a **knowing trade-off**, not
+an unfinished fix.
+
+(The frame uses `diameter + 2 × stroke width`: `CALayer` draws its border **inwards**, so adding it to the 12 pt frame
+eats twice the stroke width and shrinks the colour — the 1.5 pt version measured 452 → 216 px.)
 
 **The bar's text is plain black or white** — no "solve to exactly the target", no tinting. The bar's brightness is
 deliberately pushed up to "bright enough", so pure black is always available there and always higher contrast: with the
