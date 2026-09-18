@@ -6,7 +6,10 @@
 # 脚本不写死远程名，有几个推几个，以后加/换远程不用改它。
 #
 # 用法： bin/pushall.sh   或   git pushall
-set -euo pipefail
+#
+# 一个远程推失败时会继续推其余远程，最后汇总退出码：某个远程连不上（本次 github
+# 就整个不可达）不该让另一个也漏推 —— 那恰恰是"别漏推"要防的事。
+set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -22,9 +25,13 @@ if [ -z "$remotes" ]; then
     exit 1
 fi
 
+failed=""
 for remote in $remotes; do
     echo "→ $remote"
-    git push "$remote" "$branch"
+    if ! git push "$remote" "$branch"; then
+        echo "  ✗ $remote 推送失败（继续推其余远程）" >&2
+        failed="$failed $remote"
+    fi
 done
 
 # 推完核一遍，别让"推送成功"只停留在命令的退出码上。
@@ -34,3 +41,9 @@ for remote in $remotes; do
     printf "  %-8s %s\n" "$remote" "$(git ls-remote "$remote" "refs/heads/$branch" 2>/dev/null | cut -f1)"
 done
 printf "  %-8s %s\n" "本地" "$(git rev-parse HEAD)"
+
+if [ -n "$failed" ]; then
+    echo
+    echo "以下远程没推成功：$failed" >&2
+    exit 1
+fi
