@@ -166,8 +166,12 @@ enum Theme {
     /// 1.25 是"能分辨"，1.5 是"一眼看到"（用户选的 1.5）。
     /// 这条约束独立于"带上的字够不够对比" —— 那是两回事，字够亮不等于带子看得见。
     static let bannerVsPanel: CGFloat = 1.5
-    /// 色带的不透明度：钉住不动（用户要求"能看到后面的文字"）；明度不够时去调明度。
-    static let bannerAlpha: CGFloat = 0.55
+    /// 色带的不透明度。**2026-09-18 由 0.55 提到 0.75**（用户在这轮明确选了"折中"档）：
+    /// 色相/饱和度/亮度都钉到极值后，色带呈现出来仍是粉红（饱和度只有 0.47），
+    /// 瓶颈就是这层不透明度 —— 0.55 时鲜红被面板底稀释成 `RGB(246,141,131)`，
+    /// 0.75 时是 `RGB(254,63,63)`（实测）。代价是压在色带下的那几行字从"看得清"退到"隐约可见"，
+    /// 这是用户当场权衡后接受的；再往上是 0.85（更鲜，但色带下的字基本被盖住）。
+    static let bannerAlpha: CGFloat = 0.75
 
     /// 一种灰（默认不透明）。
     /// **必须用 sRGB 构造**：`calibratedWhite` 会被色彩空间转换改掉 —— 实测构造 0.032 读回 0.026、
@@ -244,6 +248,10 @@ enum Theme {
     ///   · **饱和度**由环境饱和度决定（见下）；
     ///   · **字色的色相**跟着环境走（与面板文字同一套规则）。
     /// 不透明度钉在 0.55 是"能看到后面的文字"那条要求定的，不参与反解。
+    ///
+    /// ⚠️ **2026-09-18 起没人调它了。** 用户要求色带改成"固定鲜红 / 鲜绿、饱和度高、亮一些"，
+    /// 那与这里逐项反解的做法直接冲突，于是换成下面的 `vividBanner`（三项全钉死）。
+    /// 这份实现**故意留着**：它是"环境自适应"路线的完整版，想回退就改 `palette()` 里那两行调用。
     static func banner(hue: CGFloat, baseSaturation: CGFloat, alpha: CGFloat,
                        panelLum: CGFloat, envSat: CGFloat) -> (fill: NSColor, text: NSColor) {
         // 饱和度：环境本身有色时降一点 —— 一条满饱和的带子压在彩色背景上，两种颜色会互相打架
@@ -283,6 +291,27 @@ enum Theme {
         // 把面板文字那套"解到刚好目标"搬到这里是错的：面板底可能落在任何亮度，带底不会。
         let ink = contrast(shown, 0) >= contrast(shown, 1) ? grey(0) : NSColor.white
         return (NSColor(deviceHue: hue, saturation: sat, brightness: brightness, alpha: alpha), ink)
+    }
+
+    /// 用户点名的"鲜"色（2026-09-18）：**色相、饱和度、亮度三个全部钉死**，不参与环境反解。
+    ///
+    /// 这是对上面那条"变色龙"路线的**有意推翻**，不是它没算对 —— 用户要的是
+    /// "鲜红和绿、饱和度高、亮一些"，而"按背景反解"这件事本身就与"固定鲜"矛盾：
+    /// 背景有色时它会把饱和度降下来（见 `sat` 那行），背景亮时它会把明度压下来。
+    /// 所以这里 `saturation / brightness` 直接取 1.0 —— 这是该色相下能取到的最鲜最亮值，
+    /// 再往上没有了（HSB 的上界），"更鲜"只能靠**改色相**或**提高不透明度**，不是调这两个数。
+    ///
+    /// **唯一还跟着算的是字色**（黑 / 白），这不是风格选择而是可读性硬约束：
+    /// 同一条色带压在浅面板与深面板上，呈现亮度差着一个数量级
+    /// （鲜红 alpha 0.55 实测：浅底 ≈0.50、深底 ≈0.06），黑字白字各只能顾一头。
+    static func vividBanner(hue: CGFloat, alpha: CGFloat,
+                            panelLum: CGFloat) -> (fill: NSColor, text: NSColor) {
+        let solid = NSColor(deviceHue: hue, saturation: 1.0, brightness: 1.0, alpha: 1)
+        let fill = solid.withAlphaComponent(alpha)
+        // 混合后的**呈现**亮度：算字色要用它，不是用色带本身那个 0.2126 / 0.7152。
+        let shown = alpha * luminance(solid) + (1 - alpha) * panelLum
+        let ink = contrast(shown, 0) >= contrast(shown, 1) ? grey(0) : NSColor.white
+        return (fill, ink)
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -329,9 +358,8 @@ enum Theme {
         // 变的是色相，换来"面板文字与背景文字不同色"；背景中性时返回 nil，文字就是黑白灰。
         // 面板底本身也是反解出来的，于是面板上每一处都由 backdrop 和它的颜色决定，没有常量。
         let tint = tintHue(for: color)
-        // 环境饱和度 —— 色带的饱和度由它决定（环境有色时色带降饱和，免得两种颜色打架）。
-        var envSat: CGFloat = 0, envVal: CGFloat = 0
-        (color.usingColorSpace(.deviceRGB) ?? color).getHue(nil, saturation: &envSat, brightness: &envVal, alpha: nil)
+        // 环境饱和度**不再参与配色**：它原先唯一的读者是色带的 `banner()`（环境有色时给色带降饱和，
+        // 免得两种颜色打架）。色带改用固定鲜艳色之后这一项没有读者了，连 `envVal` 一起删掉。
         let primary = textColor(over: panelLum, contrast: primaryContrast, tint: tint)
         // 二级：先看一级**实际**拿到了多少对比度（可能已被夹紧），再按比例退一档 ——
         // 直接解 secondaryContrast 会在暗面板上撞到 1.0 的天花板，两级双双变纯白，层次就没了。
@@ -339,16 +367,17 @@ enum Theme {
         let secondary = textColor(over: panelLum,
                                   contrast: min(secondaryContrast, reachable * secondaryRatio), tint: tint)
 
-        // 色带也交给"变色龙"：**只有色相是常量**（黄=别动、绿=可以接手，语义不能漂），
-        // 饱和度、明度、字色全部由环境反解，不透明度钉在 0.55（后面的字要能看见）。
-        // 明度不够就调明度，而不是一路加不透明度（那样会变成一条不透光的色纸）。
-        // **方案 1 的色相**：琥珀 0.10（别动）与青绿 0.45（可以接手）。原来的 0.14 / 0.38 只隔 0.24，
-        // 而黄与绿恰好是绿色盲最容易混淆的一对；拉到 0.35 之后好分辨得多，而且
-        // 青绿的 RGB 是 (0, 1, 0.7)，看着仍偏绿 —— "绿=可以走"的语义保住了。
-        let (runBase, runFg) = banner(hue: 0.10, baseSaturation: 1.00, alpha: bannerAlpha,
-                                      panelLum: panelLum, envSat: envSat)
-        let (doneBase, doneFg) = banner(hue: 0.45, baseSaturation: 0.85, alpha: bannerAlpha,
-                                        panelLum: panelLum, envSat: envSat)
+        // ---- 色带：固定**鲜红 / 鲜绿**（用户 2026-09-18 要求）----
+        // 这一改**有意推翻**了先前"只有色相是常量、饱和与明度全由环境反解"的变色龙路线
+        // （`banner()` 那份实现仍在下面躺着，只是没人调它了：想回退就把这两行换回去）。
+        // 之所以必须推翻，是因为"按背景反解"与用户要的"固定鲜"天然冲突 —— 背景有色它会降饱和、
+        // 背景亮它会压明度；现在色相、饱和度、明度三项全部钉死，见 `vividBanner`。
+        // 语义没变，只是换了颜色：**鲜红＝进行中、别动；鲜绿＝已结束、可以接手**。
+        // 色相 0.00 是正红，1/3 是正绿（120°）。注意这一对恰好是红绿色盲最难分辨的组合，
+        // 先前（琥珀 0.10 / 青绿 0.45）正是为避开它才拉开的；现在改用**明度差**兜底：
+        // 两色的自身亮度是 0.21 与 0.72（差 3.4 倍），分不出色相时仍能靠明暗区分。
+        let (runBase, runFg) = vividBanner(hue: 0.00, alpha: bannerAlpha, panelLum: panelLum)
+        let (doneBase, doneFg) = vividBanner(hue: 1.0 / 3.0, alpha: bannerAlpha, panelLum: panelLum)
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
