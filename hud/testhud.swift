@@ -301,17 +301,16 @@ enum Theme {
     /// 所以这里 `saturation / brightness` 直接取 1.0 —— 这是该色相下能取到的最鲜最亮值，
     /// 再往上没有了（HSB 的上界），"更鲜"只能靠**改色相**或**提高不透明度**，不是调这两个数。
     ///
-    /// **唯一还跟着算的是字色**（黑 / 白），这不是风格选择而是可读性硬约束：
-    /// 同一条色带压在浅面板与深面板上，呈现亮度差着一个数量级
-    /// （鲜红 alpha 0.55 实测：浅底 ≈0.50、深底 ≈0.06），黑字白字各只能顾一头。
+    /// **字色由调用方指定**（2026-09-18 用户定）：红带配白字、绿带配黑字，不再按对比度自动挑。
+    /// 实测（截图采样，字 vs 带底）：白字对鲜红底 **2.35:1**、对鲜绿底 1.14:1；
+    /// 黑字对鲜红底 8.93:1、对鲜绿底 18.36:1。所以：
+    ///   · **绿带用黑** —— 又好看又清楚，18.36:1 远超 AAA；
+    ///   · **红带用白** 是**审美优先**的选择：2.35:1 低于大字号 AA 的 3:1，全靠 heavy 字重与 18 pt
+    ///     字号顶着看（这是用户看过实拍后定的，别当成 bug 去"修"）。
     static func vividBanner(hue: CGFloat, alpha: CGFloat,
-                            panelLum: CGFloat) -> (fill: NSColor, text: NSColor) {
+                            ink: NSColor) -> (fill: NSColor, text: NSColor) {
         let solid = NSColor(deviceHue: hue, saturation: 1.0, brightness: 1.0, alpha: 1)
-        let fill = solid.withAlphaComponent(alpha)
-        // 混合后的**呈现**亮度：算字色要用它，不是用色带本身那个 0.2126 / 0.7152。
-        let shown = alpha * luminance(solid) + (1 - alpha) * panelLum
-        let ink = contrast(shown, 0) >= contrast(shown, 1) ? grey(0) : NSColor.white
-        return (fill, ink)
+        return (solid.withAlphaComponent(alpha), ink)
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
@@ -376,8 +375,9 @@ enum Theme {
         // 色相 0.00 是正红，1/3 是正绿（120°）。注意这一对恰好是红绿色盲最难分辨的组合，
         // 先前（琥珀 0.10 / 青绿 0.45）正是为避开它才拉开的；现在改用**明度差**兜底：
         // 两色的自身亮度是 0.21 与 0.72（差 3.4 倍），分不出色相时仍能靠明暗区分。
-        let (runBase, runFg) = vividBanner(hue: 0.00, alpha: bannerAlpha, panelLum: panelLum)
-        let (doneBase, doneFg) = vividBanner(hue: 1.0 / 3.0, alpha: bannerAlpha, panelLum: panelLum)
+        // 字色按**状态**定（用户 2026-09-18 指定）：红带配白字、绿带配黑字。
+        let (runBase, runFg) = vividBanner(hue: 0.00, alpha: bannerAlpha, ink: .white)
+        let (doneBase, doneFg) = vividBanner(hue: 1.0 / 3.0, alpha: bannerAlpha, ink: grey(0))
 
         let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
                                  : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)

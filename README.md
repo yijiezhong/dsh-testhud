@@ -18,10 +18,10 @@ This panel answers exactly that, on screen, without stealing focus:
 - **A permanent line about control, at the very top** — the panel's own strings are Chinese; this one reads
   `🖱️⌨️ 正在进行：先别动鼠标键盘，以免打断测试` while running and `✅ 已结束，可以收回鼠标键盘的控制权了` when done.
   It is the heaviest text on the panel and the only line carrying a background:
-  **black on vivid red while it is unsafe to touch anything, black on vivid green once you may take over**.
-  Those two colours are pinned by user request (2026-09-18, replacing amber / teal): hue, saturation and brightness all
-  fixed, opacity 0.75 so what is underneath stays dimly readable. Only the text colour (black or white) is still
-  solved — that is legibility, not style.
+  **white on vivid red while it is unsafe to touch anything, black on vivid green once you may take over**.
+  Those two band colours are pinned by user request (2026-09-18, replacing amber / teal): hue, saturation and brightness
+  all fixed, opacity 0.75 so what is underneath stays dimly readable. The text colour is picked **by state**, not by
+  contrast — see the band section below.
 - **It never gets in the way**: click-through (the mouse passes straight through), always on top, not in the Dock
   and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
 - **Move it by hand**: grab the top colour band and drag to put the panel wherever suits you. That band is the only part
@@ -163,9 +163,12 @@ term against the backdrop is incompatible with staying vivid (a coloured backdro
 pulls brightness down). The old implementation (`banner()`, amber 0.10 / teal 0.45) is still in `hud/testhud.swift`
 with no callers — to roll back, swap the two calls in `palette()`.
 
-Only the **bar's text colour** (black or white) is still solved, and that is a legibility floor rather than a style
-choice: the same bar over a light and a dark panel differs by more than 2× in shown luminance (vivid red at alpha 0.75:
-≈0.50 light, ≈0.21 dark), so black and white can each serve only one of the two.
+The **bar's text colour is picked by state** (user's call, 2026-09-18): white on the red band, black on the green one —
+no longer "whichever of black and white reaches more contrast". Measured (text vs band): white on vivid red **2.35:1**
+light / **2.57:1** dark; black on vivid green **18.36:1**. So **the green band is both good-looking and clear**, while
+**white on red is an aesthetic-first trade-off**: 2.35:1 sits below the 3:1 AA bar for large text, carried only by the
+heavy weight and 18 pt size. (Black really is higher there — 8.93:1 on the same red.) The user saw both states live
+before deciding, so **do not "fix" this back to black**.
 
 The opacity is **0.75**. At 0.55 "vivid red" simply does not exist — measured, it renders as pink `RGB(246,141,131)`
 with saturation 0.47; at 0.75 it is `RGB(239,98,85)` with saturation 0.65 (light backdrop). The cost is that the few
@@ -192,8 +195,9 @@ bar showing 0.445, pure black measures **9.90:1** while "solved to the target" g
 nothing. (Carrying the panel text's rule over to the bar was simply wrong: the panel floor can land at any luminance,
 the bar cannot.)
 
-Measured: the bar reaches **8.3:1** on a light backdrop and **5.1:1** on a dark one (re-measured 2026-09-18 after the
-switch to fixed vivid red / green; the amber / teal pair was 6.6 / 5.8).
+Measured (the bar's text vs the band; re-measured 2026-09-18 once the text colour became state-driven): run — white on
+vivid red **2.4:1** light / **2.6:1** dark; done — black on vivid green **18.4:1**. Before that (auto-picked black on the
+amber / teal pair) it was 6.6 / 5.8.
 
 **The colour is solved too, black and white first:**
 
@@ -218,14 +222,15 @@ price is white text falling from 5.24:1 to 4.62:1.
 Measured by `bin/testhud-inspect.py` on the geometry the panel exports itself. **Both backdrops are dense real text**,
 not solid colour — a solid backdrop cannot reproduce the failure this panel exists to avoid:
 
-| backdrop | banner | title / step | expect / actual | target / timer |
+| backdrop | banner (run white / done black) | title / step | expect / actual | target / timer |
 |---|---|---|---|---|
-| light (the DSH UI in a browser: dark text on white) | 8.3:1 | **9.4:1** | 7.2:1 | 7.2 / 7.2:1 |
-| dark (a terminal: white text on black) | 5.1:1 | 7.7 / 7.0:1 | 5.9–6.7:1 | 6.5 / 6.8:1 |
+| light (the DSH UI in a browser: dark text on white) | 2.4:1 / **18.4:1** | **9.4:1** | 7.2:1 | 7.2 / 7.2:1 |
+| dark (a terminal: white text on black) | 2.6:1 / 18.4:1 | 7.7 / 7.0:1 | 5.9–6.7:1 | 6.5 / 6.8:1 |
 
-18 pt counts as large text, so WCAG AAA asks 4.5:1. On a light backdrop everything except the banner reaches AAA's
-body-text bar of 7:1. Dense dark text is the worst case at 5.1:1 — still past the AAA large-text bar, but short of AAA:
-that is the price of the 0.50 floor plus vivid red being inherently dark (luminance 0.21, far below the old amber).
+18 pt counts as large text: WCAG AAA asks 4.5:1, AA asks 3:1. Everything except the banner reaches AAA's body-text bar
+of 7:1. **The banner column is the one exception**: done sits at 18.4:1, far past AAA, while **run's 2.4:1 does not even
+reach AA** — that is the user-specified "white on red" (black on the same red measures 8.93:1). A **knowing aesthetic
+trade-off**, not a mis-computed palette.
 
 Sampling excludes the panel's own window by id, so the panel never hides itself and never flickers.
 
@@ -244,10 +249,10 @@ The layout follows CRAP deliberately; keep these rules when you edit it:
 - **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose
   between.
 
-Measured in the worst case (dense dark text, see the table above): banner 5.1:1, expect/actual 5.9–6.7:1, title 7.7:1.
-The banner is still the weakest element: its opacity is pinned at 0.75 (0.55 until 2026-09-18, raised to make vivid
-red / green actually possible) so the content behind it stays dimly visible, and its hue is the inherently dark vivid
-red; 5.1:1 is that banner's ceiling under those constraints.
+Measured in the worst case (dense dark text, see the table above): expect/actual 5.9–6.7:1, title 7.7:1 — both AAA.
+The banner is the one exception: done at 18.4:1 is the best figure on the panel, run at 2.4:1 the worst (the
+user-specified white on red). Its opacity is pinned at 0.75 (0.55 until 2026-09-18, raised to make vivid red / green
+actually possible) so the content behind it stays dimly visible.
 
 Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — and the hierarchy comes from weight alone
 (heavy for the control line, bold for the title and status, semibold for steps, regular for the expect/actual detail).
