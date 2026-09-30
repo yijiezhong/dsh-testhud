@@ -3,6 +3,12 @@
 # 这一行让 **每个 session** 都拿到 `test_hud` 工具（以及系统提示里那段"跑长测试要报进展"的约定）。
 # 必须包在 `insert:` 里：不带 `insert:` 的 `- id: x` 会被 loader 读成"改一行已存在的配置"，
 # 找不到就静默跳过（DSH 自己报 `patch: entry "x" not found`），插件不会挂载。
+#
+# ⚠️ 本层**只有在 `dsh-testhud` 被列进 profile 的 `dsh.profile.bundles` 时才会被读到**。
+#   判断方法：`dsh --profile <name> --dump-config` 里应当出现 `# == dsh-testhud` 层标记。
+#   另外 `lib/index.js` 从 `@deepseek-ai/dsh-tools` 取 `defineTool`，该名字必须声明在
+#   `package.json` 的 `peerDependencies` 里，dsh 才会把它解析到**运行中宿主的那一份**
+#   （见 README「安装」与 STATUS.md 的 peerDependencies 一节）。
 - insert:
     - id: testhud
       name: dsh-testhud

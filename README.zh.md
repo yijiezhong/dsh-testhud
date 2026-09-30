@@ -28,11 +28,21 @@ agent 驱动 GUI、比对截图、批量渲染，一跑就是几分钟。这段�
 ## 安装
 
 ```sh
-dsh plugin --profile web add github:yijiezhong/dsh-testhud
+dsh plugin --profile <profile> add link:/path/to/dsh-testhud   # 从 checkout 装
+dsh plugin --profile <profile> add dsh-testhud                 # 从 registry 装
 ```
 
-新增的 bundle 行在启动时组合，所以**重启一次 profile**（插件市场里有重启按钮）。
+Desktop 应用走同一条路（插件设置页），由插件管理器**热挂载**：新增的 bundle 立刻组合进来、宿主不重启
+（实测 2026-09-30）。CLI 起的 profile 只在启动时组合 bundle 列表，如果你的 profile 不是
+`patchReload: live`，装完重启一次。
+
+bundle 必须真的列进 profile 的 `dsh.profile.bundles` —— `dsh plugin add` 会替你加；是否进了组合用
+`dsh --profile <profile> --dump-config` 看有没有 `# == dsh-testhud` 层标记。
 之后该 profile 里的**每个 session** 都有 `test_hud` 工具，以及一小段"跑长测试要报进展"的系统提示约定。
+
+`@deepseek-ai/dsh-tools` 声明为 **peerDependency**：dsh 把它解析到**运行中安装的那一份**（所以用的
+一定是宿主自己的 `defineTool`），并且当运行版本落在声明的范围之外时**拒绝加载整个 bundle**，而不是
+半挂上。`node_modules` 里那份只作 devDependency，供脱离宿主做独立测试用。
 
 卸载：
 
@@ -82,7 +92,7 @@ testhud status
 - id: testhud
   config:
     announceToAgent: true     # 是否给每个 session 注入"长测试要报进展"的约定
-    defaultAnchor: auto       # auto | top-left | top-right
+    defaultAnchor: auto       # auto | center | left | right
     topInset: 155             # 上边两个角从屏幕顶部往下让出多少点
 ```
 
@@ -219,8 +229,9 @@ bold、步骤名 semibold、期待/实际 regular。浏览器里 DSH 的正文�
 
 ## 依赖
 
-- **一个提供 `@deepseek-ai/dsh-tools` 的 dsh 宿主**——0.1.x 的 harness 都可以。本包没有任何运行时依赖：
-  `defineTool` 与 `ctx.*` 都由宿主提供。
+- **一个提供 `@deepseek-ai/dsh-tools` 的 dsh 宿主**——声明为 peer（写这份时是 `~0.2.0-rc.2`），
+  因此 `defineTool` 用的是宿主自己那份；运行版本落在范围外时宿主会拒绝加载本 bundle，而不是半挂上。
+  本包没有别的运行时依赖。
 - **浮层本体要 macOS**（AppKit）。进度文件与工具本身在哪都能用。
 - **要 Xcode 命令行工具**（`swiftc`）：浮层在第一次使用时现编到 `~/.dsh/dsh-testhud/bin/testhud`（约一秒），
   之后复用——所以包里带的是源码，不是二进制。没有 `swiftc` 时工具照样记录每一步、照样给结论，

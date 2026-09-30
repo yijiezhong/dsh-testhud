@@ -37,11 +37,23 @@ This panel answers exactly that, on screen, without stealing focus:
 ## Install
 
 ```sh
-dsh plugin --profile web add github:yijiezhong/dsh-testhud
+dsh plugin --profile <profile> add link:/path/to/dsh-testhud   # from a checkout
+dsh plugin --profile <profile> add dsh-testhud                 # from the registry
 ```
 
-A new bundle row is composed at boot, so restart the profile once (the plugin market offers a restart button).
-Every session in that profile then has the `test_hud` tool and a short prompt convention telling the agent to use it.
+The Desktop app installs the same way (plugin settings); its plugin manager **mounts a new bundle live** —
+the row is composed immediately and the host is not restarted (verified 2026-09-30). A CLI-launched profile
+composes its bundle list at boot, so restart once unless your profile reloads patches live.
+
+The package must actually be listed in the profile's `dsh.profile.bundles` (`dsh plugin add` does that for
+you); check that the row really entered the composition with `dsh --profile <profile> --dump-config` — it
+prints a `# == dsh-testhud` layer marker. Every session in that profile then has the `test_hud` tool and the
+short prompt convention.
+
+`@deepseek-ai/dsh-tools` is declared as a **peer dependency**: dsh resolves it to the running installation's
+copy (so the plugin always uses the host's own `defineTool`) and refuses the whole bundle when the running
+version falls outside the declared range, instead of half-loading it. The copy in `node_modules` is only a
+devDependency, for tests that run outside the host.
 
 Uninstall:
 
@@ -92,7 +104,7 @@ Optional row config in your profile's `cordis.patch.yml` overrides the plugin ro
 - id: testhud
   config:
     announceToAgent: true     # inject the short "report long tests on screen" convention into every session
-    defaultAnchor: auto       # auto | top-left | top-right
+    defaultAnchor: auto       # auto | center | left | right
     topInset: 155             # how far the top anchors drop below the screen top, in points
 ```
 
@@ -262,8 +274,9 @@ panel resizes with it.
 
 ## Requirements
 
-- **A dsh host that provides `@deepseek-ai/dsh-tools`** — any 0.1.x harness. The package declares no runtime
-  dependencies: `defineTool` and `ctx.*` come from the host.
+- **A dsh host that provides `@deepseek-ai/dsh-tools`** — declared as a peer (`~0.2.0-rc.2` at the time of
+  writing), so `defineTool` is the host's own copy and a runtime outside the declared range is refused rather
+  than half-loaded. The package has no other runtime dependencies.
 - **macOS** for the panel itself (AppKit). The progress file and the tool work anywhere.
 - **Xcode Command Line Tools** for `swiftc` — the panel is compiled on first use into
   `~/.dsh/dsh-testhud/bin/testhud` (about a second) and reused afterwards, so the package ships source, not binaries.
