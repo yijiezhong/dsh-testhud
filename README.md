@@ -85,22 +85,22 @@ Where the panel goes is decided in this order:
 2. **Centre of the screen**, when that blocks nothing.
 3. Otherwise **the side** — left before right.
 
-Vertically it always sits high: the top edge clears the menu bar and toolbars (`topInset`), the bottom edge stops above the status bar / Dock (`Look.bottomInset`, 44 pt). Horizontally it stays off the edges (`Look.sideInset`, 28 pt) so it cannot sit on a sidebar or a scrollbar. Anchors are `auto | center | left | right`; the old `top-left` / `top-right` names still map to `left` / `right`.
+Vertically it always sits high: the top edge sits `topInset` points below the **screen top** (155 by default), the bottom edge stops above the status bar / Dock (`Look.bottomInset`, 44 pt). Horizontally it stays off the edges (`Look.sideInset`, 28 pt) so it cannot sit on a sidebar or a scrollbar. Anchors are `auto | center | left | right`; the old `top-left` / `top-right` names still map to `left` / `right`.
 
-`topInset` exists because the panel usually floats **over a browser**: the top ~150 pt of the screen are the tab strip, the address bar and the bookmarks bar, and a panel there would cover them. The default (155) starts the panel just below that chrome — level with the page's own header. Set it to `0` to keep only a 14 pt screen margin. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
+`topInset` exists because the panel usually floats **over a browser**: the top ~150 pt of the screen are the tab strip, the address bar and the bookmarks bar, and a panel there would cover them. The default (155) starts the panel just below that chrome — level with the page's own header. `0` degrades to "clear the menu bar, then keep a 14 pt screen margin". The value is measured **from the screen top** (positioning uses the full `frame`, not `visibleFrame`), so what you pass is what you get. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
 
 ### Size and overflow
 
 **Both dimensions follow the content** (`HUD.layout()`):
 
 - **Width** is the widest line at its natural (unwrapped) width plus the left and right insets (`Look.inset`, 16 pt), clamped to a floor of **460 pt** (`Look.minWidth`) and a ceiling of the screen's usable width minus 28 pt on each side (`Look.sideInset`).
-- **Height** follows the content, and is exactly the content height while it fits; the ceiling is the screen's usable height minus the `topInset` the top gives up (155 by default) minus 44 pt at the bottom (`Look.bottomInset`) — **no longer 62% of the screen height**. Yellow collapses the panel to just the band; green expands it to that ceiling **and** to the full usable width.
+- **Height** follows the content, and is exactly the content height while it fits; the ceiling is the span from the panel's top edge (`topInset` below the screen top, 155 by default) down to the bottom of the usable area minus 44 pt (`Look.bottomInset`) — **no longer 62% of the screen height**. Yellow collapses the panel to just the band; green expands it to that ceiling **and** to the full usable width.
 
 The height has a ceiling, so with enough content the upper part is pushed outside the visible area. The panel's content area then carries a transparent drag hit layer (the `ScrollHandle` window plus its `ScrollGrip` view): **press and pull downwards to bring the upper content back** (natural scroll direction), and on release it eases back to the bottom over **0.28 s ease-out** — "the last line returns to the bottom of the window". **The hit layer only exists when content is actually cut off** (its height is 0 otherwise), so a panel whose content fits stays fully click-through. The cursor shows an open hand over it and a closed hand while held, reverting on release. Observe it at `~/.dsh/dsh-testhud/scroll.json` (`scrollY` / `maxY` / `atBottom` / `panning` / `bouncing` / `cursor` — the last one because screenshots do not contain the mouse pointer, so the cursor can only be verified this way).
 
 ### Colours come from the Apple swatch only
 
-**Every colour on the panel must exist in the Apple swatch** — the 22 colours on page 1 of `~/PARA/8.Code/AIDoc/设计规范/Apple色板/1Apple配色色卡.key` (9 neutrals + 3 blues + 10 functional). The single source of truth in code is `ApplePalette` in `hud/testhud.swift`, all built in **sRGB** (`calibrated*` constructors shift the values).
+**Every colour on the panel must exist in the Apple swatch** — the 22 colours on page 1 of the swatch (`Apple色板/1Apple配色色卡.key`, on this machine under `$HOME/PARA/8.Code/AIDoc/设计规范/`): 9 neutrals + 3 blues + 10 functional. The single source of truth in code is `ApplePalette` in `hud/testhud.swift`, all built in **sRGB** (`calibrated*` constructors shift the values).
 
 | Part | Light appearance | Dark appearance |
 |---|---|---|
@@ -116,9 +116,7 @@ The step marks are `✓` / `✗` / `⏳` / `•` and **not** `✅` / `❌`: colo
 
 **Only two things are still computed**: which appearance to use (`backdrop > 0.35`) and the panel background's opacity (`solveAlpha`, floor **0.50**). The user explicitly kept **translucency + the blurred backdrop**, so white over a backdrop does not measure as `#FFFFFF`; the rule is therefore "**the value comes from the swatch**", not "the rendered pixel equals it". The backdrop is sampled every 0.7 s — *the rectangle the panel is about to cover*, and only that rectangle, plus immediately whenever the frontmost app changes or the panel resizes or changes content — yielding an average luminance and a light/dark spread (p10–p90), which decide the appearance and how flat the blurred ground is flattened. The panel's ground is **a blurred snapshot of what it covers** (σ=34 Gaussian, desaturated to 0.70): it turns the competing text underneath into soft light and shade — you can still tell something is there, but it no longer competes. Compressing its contrast around mid-grey shifts the image's mean, so the mean must be **anchored back to the measured value**, or the panel picks text colours for a backdrop that does not exist.
 
-### (before 2026-10-04) Environment-adaptive palette — disabled
-
-The "chameleon" route: colours and luminances solved from the backdrop. `Theme.palette()` no longer calls it — `banner()` / `tinted()` / `textColor()` are still in the source, unused. What they compute necessarily lands outside the swatch, in direct conflict with the rule above, so **ask the user before reviving it**. History: `STATUS.md`.
+The old "chameleon" colour functions (`banner()` / `tinted()` / `textColor()`) are still in the source and no longer called; they necessarily compute colours outside the swatch, in direct conflict with the rule above, so **ask the user before reviving them**.
 
 ## Visual design
 
