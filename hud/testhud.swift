@@ -835,8 +835,19 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     /// 按内容算高度并摆好四块：顶部色带通栏、头部固定、步骤区滚动、页脚固定；高度变化时**顶边不动**。
     private func layout(alert: NSAttributedString, head: NSAttributedString, body: NSAttributedString, foot: NSAttributedString) {
-        guard let screen = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
-        let topInset = max(0, topInsetArg)
+        guard let nsScreen = panel.screen ?? NSScreen.main else { return }
+        // 两块矩形，分工**必须**分清（2026-10-09 修 `topInset` 偏差时定下的）：
+        //   · `vis`（visibleFrame）—— **量尺寸**用：宽度与高度上限都在这里取，保证面板不压状态栏 / Dock；
+        //   · `full`（frame）—— **定位**用：`topInset` 的语义是"距**屏幕顶**多少点"。
+        // 早先两处都拿 visibleFrame，于是"距屏幕顶 155 点"实际落在 186 点 —— 差的正是整个菜单栏
+        // （31 点，见 STATUS.md「面板定位有 30 点偏差」那条）。
+        let vis = nsScreen.visibleFrame
+        let full = nsScreen.frame
+        let menuDrop = max(0, full.maxY - vis.maxY)   // 菜单栏占掉的高度
+        /// 顶边距屏幕顶多少点。传 0 时保持老行为：让开菜单栏后再留 `screenMargin`。
+        let topGap = topInsetArg > 0
+            ? max(Look.screenMargin, topInsetArg)
+            : max(Look.screenMargin, menuDrop + Look.screenMargin)
         let gap = Look.groupGap
 
         func height(_ s: NSAttributedString, _ w: CGFloat) -> CGFloat {
@@ -854,12 +865,17 @@ final class HUD: NSObject, NSApplicationDelegate {
                                                     height: CGFloat.greatestFiniteMagnitude),
                                        options: [.usesLineFragmentOrigin, .usesFontLeading]).width)
         }
-        let maxWidth = max(Look.minWidth, screen.width - Look.sideInset * 2)
+        let maxWidth = max(Look.minWidth, vis.width - Look.sideInset * 2)
+        // ⚠️ 与 `NSTextField` 实际排版对齐的余量，**不能省**。
+        // `boundingRect` 判定"刚好放得下"时，真实排版可能已经折行 —— 实测（18pt semibold）：
+        // 27 字结论的自然宽 482.7 点，字段给 483 会排成 **两行**，给到 487 才是一行。
+        // 不留余量就会出现"高度按一行算、实际排两行"，第二行被字段高度裁掉（2026-10-09 修）。
+        let widthSlack: CGFloat = 8
         let wantedWidth = max(naturalWidth(head),
                               naturalWidth(body) + 10,      // 步骤有一档缩进 + 行首 mark 的余量
                               naturalWidth(foot),
                               naturalWidth(alert) + TrafficLights.reservedWidth)
-            + Look.inset * 2
+            + Look.inset * 2 + widthSlack
         panelWidth = min(max(wantedWidth, Look.minWidth), maxWidth)
 
         // 绿点"放大"：**连宽度一起撑满**。
@@ -871,7 +887,10 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         // ---- 高度：上限改成**整块屏幕可用高度**（用户 2026-10-04：不再卡在 62%）----
         // 仍旧顶边让开工具栏、底边不压状态栏 —— 即"最大不超过系统提供的窗口高度"。
-        let maxHeight = max(96, screen.height - max(topInset, Look.screenMargin) - Look.bottomInset)
+        // 可用高度 = 顶边（距屏幕顶 `topGap`）到可见区底边、再让开 `bottomInset` 那一段。
+        // 从 `full.maxY` 起算与定位同源：顶边挪高多少，上限就跟着放宽多少，面板**底边**始终停在
+        // `vis.minY + bottomInset` —— 效果是"面板能更长"，而不是"面板更靠下压住状态栏"。
+        let maxHeight = max(96, full.maxY - topGap - vis.minY - Look.bottomInset)
         let innerWidth = panelWidth - Look.inset * 2
         // 色带左边要放三个圆点，文字得从它们右边开始 —— 量高度时就得按缩窄后的宽度算，
         // 否则文字按全宽排好版、再塞进窄框里又会折行，高度和实测对不上。
@@ -935,7 +954,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         if !placed {
             placed = true
-            panel.setFrameOrigin(origin(for: NSSize(width: panelWidth, height: total), on: screen))
+            panel.setFrameOrigin(origin(for: NSSize(width: panelWidth, height: total), on: full, topGap: topGap))
         } else {
             panel.setFrameOrigin(NSPoint(x: panel.frame.origin.x, y: oldTop - total))
         }
@@ -967,9 +986,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         // 踩过：原先它在最前面，于是首次放置时报的是**移动前**的位置（面板随后会被挪到候选点），
         // 而内容不再变化就不会再进 `layout()` —— 观测文件能一直停在旧坐标上。
         // 按它算出来的点击坐标会全部打空，看上去就像"圆点点了没反应"（2026-10-04 查了很久）。
-        // 另外这里传的是**全屏**顶边、不是 `screen`（那是 visibleFrame，少了菜单栏那 30 点）：
-        // 面板的 NS 坐标以全屏为基准，拿 visibleFrame 去换算会让观测工具在**高 30 点**的矩形里裁图。
-        exportFrame(screen: (panel.screen ?? NSScreen.main)?.frame ?? screen)
+        // 传的是**全屏**矩形（`full`）：面板的 NS 坐标以全屏为基准，`topInset` 现在也按全屏顶算 ——
+        // 观测端据此换算出来的"距屏幕顶"才和用户传的值一一对应。
+        exportFrame(screen: full)
 
         panel.invalidateShadow()
     }
@@ -1542,22 +1561,26 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     // MARK: 位置：优先不挡被测对象，其次居中，再左、再右
 
-    /// 三个水平候选，纵向一律"靠上"：顶边让开菜单/工具栏，底边不越过状态栏（高度上限见 layout）。
+    /// 三个水平候选，纵向一律"靠上"：顶边距**屏幕顶** `topGap` 点（`topInset` 就是这个值的来源），
+    /// 底边不越过状态栏（高度上限见 `layout`）。
     /// 横向都不贴边（`sideInset`），免得压住侧边栏或滚动条。
-    private func candidates(size: NSSize, on screen: NSRect) -> [(name: String, origin: NSPoint)] {
-        let top = max(Look.screenMargin, topInsetArg)
-        let y = screen.maxY - size.height - top
+    ///
+    /// `full` 是**全屏**矩形（不是 visibleFrame）—— 面板的 NS 坐标以全屏为基准，用它算才能让
+    /// "距屏幕顶 N 点"字面成立（2026-10-09 修正，见 `layout` 顶部注释与 STATUS.md）。
+    private func candidates(size: NSSize, on full: NSRect, topGap: CGFloat) -> [(name: String, origin: NSPoint)] {
+        let top = max(Look.screenMargin, topGap)
+        let y = full.maxY - size.height - top
         let side = max(Look.screenMargin, Look.sideInset)
         // 旧配置里的 top-left / top-right 继续认，映射到靠上的左 / 右。
         return [
-            ("center", NSPoint(x: screen.minX + (screen.width - size.width) / 2, y: y)),
-            ("left",   NSPoint(x: screen.minX + side, y: y)),
-            ("right",  NSPoint(x: screen.maxX - size.width - side, y: y)),
+            ("center", NSPoint(x: full.minX + (full.width - size.width) / 2, y: y)),
+            ("left",   NSPoint(x: full.minX + side, y: y)),
+            ("right",  NSPoint(x: full.maxX - size.width - side, y: y)),
         ]
     }
 
-    private func origin(for size: NSSize, on screen: NSRect) -> NSPoint {
-        let cands = candidates(size: size, on: screen)
+    private func origin(for size: NSSize, on full: NSRect, topGap: CGFloat) -> NSPoint {
+        let cands = candidates(size: size, on: full, topGap: topGap)
         let wanted = anchorArg == "top-left" ? "left" : (anchorArg == "top-right" ? "right" : anchorArg)
         if wanted != "auto", let hit = cands.first(where: { $0.name == wanted }) { return hit.origin }
 
@@ -1597,23 +1620,6 @@ final class HUD: NSObject, NSApplicationDelegate {
             out.append(NSRect(x: x, y: screenTop - y - height, width: width, height: height))
         }
         return out
-    }
-}
-
-/// 把手事件的诊断日志（写在 `~/.dsh/dsh-testhud/drag.log`）。
-/// 排障用的：窗口在位、位置分毫不差、辅助功能权限也是 true，拖动却毫无反应 ——
-/// 只有日志能分辨"事件根本没到窗口"和"到了但位移算错"。留在代码里，下次不用重查一遍。
-func dragLog(_ text: String) {
-    let dir = NSHomeDirectory() + "/.dsh/dsh-testhud"
-    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    let path = dir + "/drag.log"
-    let line = "\(Date().timeIntervalSince1970) \(text)\n"
-    if let handle = FileHandle(forWritingAtPath: path) {
-        handle.seekToEndOfFile()
-        handle.write(line.data(using: .utf8)!)
-        handle.closeFile()
-    } else {
-        try? line.write(toFile: path, atomically: true, encoding: .utf8)
     }
 }
 
@@ -1730,7 +1736,6 @@ final class DragGrip: GrabCursorView {
     override func mouseDown(with event: NSEvent) {
         lastPoint = NSEvent.mouseLocation
         hud?.showGrabCursor()          // 按下即"抓紧"：告诉用户这一下能拖动面板
-        dragLog("mouseDown global=\(lastPoint)")
     }
 
     /// 把窗口原点夹进**鼠标所在那块屏**的可见范围 —— 按鼠标选屏，跨屏拖动就自然成立。
@@ -1780,7 +1785,6 @@ final class DragGrip: GrabCursorView {
         // 把手当场跟上，不等下一次 `layout()`（最多 0.4 秒后）：否则拖动时把手会明显"掉队"，
         // 看起来像色带没跟着面板走。（拖拽期间事件是锁定在这个 view 上的，鼠标跑出把手也不会断。）
         handle.setFrameOrigin(NSPoint(x: host.frame.minX, y: host.frame.maxY - handle.frame.height))
-        dragLog("dragged d=(\(dx),\(dy)) host=\(host.frame.origin)")
     }
 }
 
@@ -1901,7 +1905,6 @@ final class TrafficLights: NSView {
     /// 起步、之后又被 `setFrame(display: false)` 改过尺寸的把手窗口里，不该赌它会被调。
     /// 换成子视图 + `cornerRadius` 之后渲染走 CALayer，只要进了视图层次就会显示。
     private var dots: [NSView] = []
-    private static var layoutLogs = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1923,11 +1926,6 @@ final class TrafficLights: NSView {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         layoutDots()
-        if Self.layoutLogs < 3 {
-            Self.layoutLogs += 1
-            dragLog("lights.resize bounds=\(bounds) layers=\(dots.map { $0.layer != nil }) "
-                    + "bg=\(dots.first?.layer?.backgroundColor != nil) frames=\(dots.map { $0.frame })")
-        }
     }
 
     /// 摆位置 **并且** 每次都重设 layer 的样子。
