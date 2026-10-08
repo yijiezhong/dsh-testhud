@@ -7,8 +7,11 @@
 //
 // 版面按 CRAP 定规矩（Contrast / Repetition / Alignment / Proximity）：
 //   · **Contrast**：彩色只留给"状态"这一个语义 —— 顶部控制权色带 + 步骤行首那一个字符。
-//     其余层次全靠**两级灰**（浅面板 0.06 / 0.08，深面板 white / 0.90）+ **字重四档**（heavy / bold / semibold / regular），
-//     不靠字号（用户要求全部文字同一个字号）。
+//     其余层次全靠**两级文字**（一级 纯黑 / 纯白，二级 中灰 #6E6E73 / 灰 #86868B）
+//     + **字重四档**（heavy / bold / semibold / regular），不靠字号（用户要求全部文字同一个字号）。
+//   · **取色**：面板里出现的每一个颜色都必须来自 `ApplePalette`（Apple 色卡 22 色，用户 2026-10-04 定）。
+//     浅色系 = 纯白面板底 + 很细的纯黑边框 + 纯黑一级字；深色系 = 石墨灰 #1D1D1F 面板底
+//     + 很细的纯白边框 + 纯白一级字；色带 = 色板红 #FF3B30（进行中）/ 绿 #34C759（已结束）。
 //   · **Repetition**：所有内容贴同一条左边界（inset）；间距只有三个值 —— 组间 14、步骤间 10、行内 2~4。
 //   · **Alignment**：控制权色带通栏，文字用 headIndent 回到内容左边界；步骤的"期待/实际"用真正的
 //     headIndent 缩进（不是空格 —— 比例字体下空格根本对不齐）。
@@ -62,16 +65,46 @@ private enum Look {
     /// CSS px 同尺度；浮层是半透明底上的浅色字，同字号看着比浏览器里的黑字小，所以取 18。
     static let base: CGFloat = 18
 
-    static let width: CGFloat = 740             // 面板宽
+    /// 面板宽的**兜底值**：窗口是启动时建的，那会儿还没有内容可量，先用它，第一帧布局就会改掉。
+    /// 真实宽度**按内容算**（见 `HUD.layout()`）：下限 `minWidth`，上限是屏幕可用宽度减去左右让位。
+    static let width: CGFloat = 740
+    /// 面板宽的下限 —— 内容很窄（比如只有一行标题）时也不至于缩成一条。
+    static let minWidth: CGFloat = 460
     static let inset: CGFloat = 16              // 面板内边距，同时是内容左边界
     static let screenMargin: CGFloat = 14       // 离屏幕边缘
-    static let maxHeightRatio: CGFloat = 0.62   // 最多占屏幕可见高度的 62%
+    /// **已不再用于主高度上限** —— 2026-10-04 起面板可以长到"整块屏幕可用高度"（用户要求：
+    /// 最大不超过系统提供的窗口高度）。留着它是因为绿点"放大"仍需一个明确的上限语义，
+    /// 只是现在那个上限由 `layout()` 里的 `maxHeight` 直接给出。
+    static let maxHeightRatio: CGFloat = 0.62
     static let cornerRadius: CGFloat = 14       // 比原来更圆一点，边缘不那么"硬"
+    /// 面板边框粗细（用户 2026-10-04 要求"很细的纯黑 / 纯白"）。
+    /// 1.0 点就是原来一直在用的值（Retina 上 = 2 物理像素），这次只换颜色、没动粗细；
+    /// 要真正的 hairline 就改成 0.5（Retina 上 1 物理像素），非 Retina 屏会渲染成半透明灰。
+    static let panelBorderWidth: CGFloat = 1.0
     static let bandPad: CGFloat = 10            // 控制权色带里文字的上下留白
     /// 屏幕底部这条不让压：状态栏 / Dock / 播放条。
     static let bottomInset: CGFloat = 44
     /// 左右不让面板贴边：躲开侧边栏与滚动条。
     static let sideInset: CGFloat = 28
+
+    /// 步骤行首的四个符号。**必须是能跟随 `foregroundColor` 的字符** —— 用户 2026-10-04 要求
+    /// "颜色严格只使用色板出现过的颜色"，而彩色 emoji 会无视前景色、画出自己那套色板外的颜色。
+    /// 2026-10-04 用双前景色对照实验（同一个字符分别用绿 / 红渲染，看画出的主色跟不跟随）实测：
+    ///   · `✓ U+2713` / `✗ U+2717` / `● U+25CF` / `◐ U+25D0` —— 纯文本字符，**天然跟随**；
+    ///   · `⏳ U+23F3` / `⚠ U+26A0` —— 加 `U+FE0E`（变体选择符 VS15，强制文本呈现）后**变单色、跟随前景色**，
+    ///     所以保留原字形，只补一个 VS15；
+    ///   · `✅ U+2705` / `❌ U+274C` —— **连加 VS15 都不跟随**（画出 #E50000 的红、#01B400 一带的绿），
+    ///     实测截图里行首会出现 1444 个色板外像素，只能换字符。
+    ///
+    /// 想换回原来的 emoji 观感：`ok` 改回 `"✅"`、`bad` 改回 `"❌"`、`run` 去掉末尾的 `\u{FE0E}`。
+    /// **代价是行首重新出现色板外的颜色** —— 这是用户定的"严格"与"好看"之间的取舍，别默默改回去。
+    enum Mark {
+        static let ok   = "✓"           // 原 "✅"
+        static let bad  = "✗"           // 原 "❌"
+        static let run  = "⏳\u{FE0E}"  // 原 "⏳"；VS15 强制单色
+        static let info = "•"
+        static let warn = "⚠\u{FE0E}"   // 原 "⚠️"；VS15 强制单色
+    }
 
     /// 间距只有三个值，全局复用。
     static let groupGap: CGFloat = 14           // 组与组之间（头部 / 步骤 / 结论）
@@ -115,6 +148,68 @@ struct Palette {
     let stateBad: NSColor
     let stateRun: NSColor
     let stateInfo: NSColor
+}
+
+// MARK: - Apple 色板（唯一取色来源）
+
+/// **本项目唯一的取色来源。**
+///
+/// 色值来自 `~/PARA/8.Code/AIDoc/设计规范/Apple色板/1Apple配色色卡.key` 第 1 页（共 22 色），
+/// 2026-10-04 逐条与同目录的 `Apple色板.json` 核对一致。
+///
+/// **规矩（用户 2026-10-04 定）：面板里出现的每一个颜色，都必须能在这 22 色里找到。**
+/// 想加颜色先确认它在色卡里；不许在别处直接写 RGB，更不许用 `deviceHue` / `calibrated*`
+/// 之类的构造函数**现场算**一个颜色 —— 算出来的值必然落在色板之外。
+///
+/// 全部用 **sRGB** 构造：`calibrated*` 会被色彩空间转换改掉（实测构造 0.032 读回 0.026），
+/// 而对比度核对是按"构造值 = 实际值"做的，用 calibrated 会让数字对不上。
+enum ApplePalette {
+    // —— 中性 9 色 ——
+    static let black     = hex(0x000000)   // 纯黑
+    static let spaceGray = hex(0x161617)   // 深空灰
+    static let graphite  = hex(0x1D1D1F)   // 石墨灰
+    static let midGray   = hex(0x6E6E73)   // 中灰
+    static let gray      = hex(0x86868B)   // 灰
+    static let hairline  = hex(0xE8E8ED)   // 浅灰线
+    static let siteBg    = hex(0xF5F5F7)   // 官网底
+    static let nearWhite = hex(0xFAFAFC)   // 近白
+    static let white     = hex(0xFFFFFF)   // 纯白
+
+    // —— 强调 3 色 ——
+    static let blue        = hex(0x0071E3) // 苹果蓝
+    static let bluePressed = hex(0x006EDB) // 按下蓝
+    static let blueBright  = hex(0x2997FF) // 亮蓝
+
+    // —— 功能 10 色 ——
+    static let red        = hex(0xFF3B30)  // 红
+    static let orange     = hex(0xFF9500)  // 橙
+    static let yellow     = hex(0xFFCC00)  // 黄
+    static let green      = hex(0x34C759)  // 绿
+    static let mint       = hex(0x00C7BE)  // 薄荷
+    static let teal       = hex(0x32ADE6)  // 青
+    static let systemBlue = hex(0x007AFF)  // 系统蓝
+    static let indigo     = hex(0x5856D6)  // 靛
+    static let purple     = hex(0xAF52DE)  // 紫
+    static let pink       = hex(0xFF2D55)  // 粉
+
+    /// 色板全集 —— 供观测/验证端核对"有没有色板外的颜色"。顺序与色卡一致。
+    static let all: [(name: String, color: NSColor)] = [
+        ("纯黑", black), ("深空灰", spaceGray), ("石墨灰", graphite),
+        ("中灰", midGray), ("灰", gray), ("浅灰线", hairline),
+        ("官网底", siteBg), ("近白", nearWhite), ("纯白", white),
+        ("苹果蓝", blue), ("按下蓝", bluePressed), ("亮蓝", blueBright),
+        ("红", red), ("橙", orange), ("黄", yellow), ("绿", green),
+        ("薄荷", mint), ("青", teal), ("系统蓝", systemBlue),
+        ("靛", indigo), ("紫", purple), ("粉", pink),
+    ]
+
+    /// `0xRRGGBB` → sRGB `NSColor`（不透明）。
+    static func hex(_ v: UInt32) -> NSColor {
+        NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255.0,
+                green: CGFloat((v >> 8) & 0xFF) / 255.0,
+                blue: CGFloat(v & 0xFF) / 255.0,
+                alpha: 1)
+    }
 }
 
 /// 变色龙：**颜色和透明度全部由"面板将要盖住的那块区域有多亮"算出来**，没有第二套预设。
@@ -318,6 +413,16 @@ enum Theme {
         return 0.2126 * c.redComponent + 0.7152 * c.greenComponent + 0.0722 * c.blueComponent
     }
 
+    /// `NSColor` → `"#RRGGBB"`（按 sRGB 读数）。给观测端核对"这个颜色在不在色板里"用 ——
+    /// **不要靠肉眼看截图**：1 个色阶的差在截图里完全看不出来，在 hex 里一目了然。
+    static func hexString(_ color: NSColor) -> String {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        let r = Int((min(1, max(0, c.redComponent)) * 255).rounded())
+        let g = Int((min(1, max(0, c.greenComponent)) * 255).rounded())
+        let b = Int((min(1, max(0, c.blueComponent)) * 255).rounded())
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+
     /// 反解"要把这一层压/提到 `wanted` 亮度，它需要多不透明"：结果 = a×base + (1−a)×底下，解 a。
     /// 夹在 [0.30, 0.95] —— 下界保证这一层还看得见，上界保证它不变成死板的实心块。
     static func solveAlpha(over under: CGFloat, base: CGFloat, wanted: CGFloat) -> CGFloat {
@@ -338,59 +443,64 @@ enum Theme {
                : (text + 0.05) * contrast - 0.05
     }
 
+    /// 一套配色。**取值全部来自 `ApplePalette`**（用户 2026-10-04 定的硬规矩）；
+    /// 唯一仍然是"算出来"的是面板不透明度 —— 用户选择保留半透明 + 模糊底图，
+    /// 所以面板底会与背景混合、屏幕上量到的不是色板原值（用户已知情并接受：
+    /// 第 1 条按"**取值**来自色板"落实，而不是"呈现色就是色板色"）。
+    ///
+    /// 两个外观档由**面板背后那块屏幕的亮度**决定（沿用旧判据 `backdrop > 0.35`）：
+    ///   · 浅色系：主体背景 纯白 `#FFFFFF`、边框 很细的纯黑 `#000000`、
+    ///             一级文字 纯黑 `#000000`、二级文字 中灰 `#6E6E73`
+    ///   · 深色系：主体背景 石墨灰 `#1D1D1F`、边框 很细的纯白 `#FFFFFF`、
+    ///             一级文字 纯白 `#FFFFFF`、二级文字 灰 `#86868B`
+    ///
+    /// 色带与外观档无关，按状态取色板红 / 绿：**红 `#FF3B30` = 进行中**、**绿 `#34C759` = 已结束**。
+    /// 带上的字色按状态定（红带配纯白、绿带配纯黑）—— 这是色板里唯一在两种带底上都拿得出手的搭配：
+    /// 纯白对红带 3.5:1（大字号 AA 达标）、纯黑对绿带 9.5:1（AAA）。
+    ///
+    /// **被停用的旧路线**：下面 `banner()` / `tinted()` / `textColor()` 是"变色龙"实现
+    /// （颜色与亮度全由背景反解），自 2026-10-04 起不再被本函数调用。**恢复之前先问用户** ——
+    /// 它们算出来的颜色必然落在 Apple 色板之外，与新规矩直接冲突。
     static func palette(for backdrop: CGFloat, color: NSColor = .gray) -> Palette {
-        // 关键在方向：面板与背景**同向**，不是相反 —— 浅背景配更亮的面板 + 深字，
-        // 深背景配更暗的面板 + 白字。方向对了才轮到对比度；方向反了只能靠加不透明度去救，
-        // 那正是"遮挡太重"的来源。
+        // 方向仍然成立：面板与背景**同向** —— 浅背景配更亮的面板 + 深字，深背景配更暗的面板 + 白字。
         let lightPanel = backdrop > 0.35
-        let fillBase = lightPanel ? NSColor.white : grey(0.02)
-        // 不透明度由"要把面板提到/压到目标的亮度"反解 —— 和配色一样是算出来的，不是常量。
-        // 背景落在中灰时它提上去，把面板推离中灰；背景已经在两端时它落到 0.50 的下限（用户定的取舍）。
+        // 面板底：浅色系 纯白 / 深色系 石墨灰（均取自 Apple 色板）。
+        // 不透明度仍由"要把面板推到目标亮度"反解 —— 这是保留下来的那半套自适应。
+        // `color` 参数已不参与取色（旧变色龙拿它算互补色），保留签名只是为了不动调用点。
+        let fillBase = lightPanel ? ApplePalette.white : ApplePalette.graphite
         let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
                                    wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
 
-        let panelLum = fillAlpha * luminance(fillBase) + (1 - fillAlpha) * backdrop
+        // 文字：**不再按对比度反解**（那会算出色板外的灰阶），直接用色板两极 —— 一级纯黑 / 纯白。
+        let primary = lightPanel ? ApplePalette.black : ApplePalette.white
+        // 二级：色板里"次要文字"那两个灰 —— 浅色系中灰、深色系灰。
+        // （中灰落在石墨灰底上只剩 ~1.3:1，所以深色系必须换成更亮的灰，不能两档共用一个。）
+        let secondary = lightPanel ? ApplePalette.midGray : ApplePalette.gray
 
-        // 文字：亮度**由面板底反解**（不再是写死的 0.06 / white / 0.90），黑与白里谁给得多用谁；
-        // 物理上解不出来就贴极端，实际对比度便低于目标 —— 那个底给不出更多了。
-        // 颜色也跟着环境走：**背景明显有色时，文字取它的互补色** —— 亮度不变（对比度分毫不差），
-        // 变的是色相，换来"面板文字与背景文字不同色"；背景中性时返回 nil，文字就是黑白灰。
-        // 面板底本身也是反解出来的，于是面板上每一处都由 backdrop 和它的颜色决定，没有常量。
-        let tint = tintHue(for: color)
-        // 环境饱和度**不再参与配色**：它原先唯一的读者是色带的 `banner()`（环境有色时给色带降饱和，
-        // 免得两种颜色打架）。色带改用固定鲜艳色之后这一项没有读者了，连 `envVal` 一起删掉。
-        let primary = textColor(over: panelLum, contrast: primaryContrast, tint: tint)
-        // 二级：先看一级**实际**拿到了多少对比度（可能已被夹紧），再按比例退一档 ——
-        // 直接解 secondaryContrast 会在暗面板上撞到 1.0 的天花板，两级双双变纯白，层次就没了。
-        let reachable = contrast(panelLum, luminance(primary))
-        let secondary = textColor(over: panelLum,
-                                  contrast: min(secondaryContrast, reachable * secondaryRatio), tint: tint)
+        // ---- 色带：色板红 / 绿（用户 2026-10-04 定的取色来源）----
+        // 语义沿用 2026-09-18 定下的那套：**红＝进行中、别动；绿＝已结束、可以接手**。
+        // 之前这里用的是 HSB 钉死的正红 / 正绿（hue 0.00 与 0.333、sat 与 bri 全 1.0），
+        // 那对颜色**不在 Apple 色板里**（约 #FF0000 / #00FF00），已按新规矩换成色板值。
+        // 不透明度沿用 0.75 那一档（用户 2026-09-18 在 0.55 / 0.75 / 0.85 里挑的折中），2026-10-04 未改。
+        // 字色按**状态**定（用户 2026-09-18 指定）：红带配白字、绿带配黑字 ——
+        // 换到色板值之后这两组反而更稳：白对 #FF3B30 是 3.5:1（旧的鲜红只有 2.35:1，低于大字号 AA），
+        // 黑对 #34C759 是 9.5:1。**红带白字终于达标了，不再是知情取舍。**
+        let (runBase, runFg) = (ApplePalette.red.withAlphaComponent(bannerAlpha), ApplePalette.white)
+        let (doneBase, doneFg) = (ApplePalette.green.withAlphaComponent(bannerAlpha), ApplePalette.black)
 
-        // ---- 色带：固定**鲜红 / 鲜绿**（用户 2026-09-18 要求）----
-        // 这一改**有意推翻**了先前"只有色相是常量、饱和与明度全由环境反解"的变色龙路线
-        // （`banner()` 那份实现仍在下面躺着，只是没人调它了：想回退就把这两行换回去）。
-        // 之所以必须推翻，是因为"按背景反解"与用户要的"固定鲜"天然冲突 —— 背景有色它会降饱和、
-        // 背景亮它会压明度；现在色相、饱和度、明度三项全部钉死，见 `vividBanner`。
-        // 语义没变，只是换了颜色：**鲜红＝进行中、别动；鲜绿＝已结束、可以接手**。
-        // 色相 0.00 是正红，1/3 是正绿（120°）。注意这一对恰好是红绿色盲最难分辨的组合，
-        // 先前（琥珀 0.10 / 青绿 0.45）正是为避开它才拉开的；现在改用**明度差**兜底：
-        // 两色的自身亮度是 0.21 与 0.72（差 3.4 倍），分不出色相时仍能靠明暗区分。
-        // 字色按**状态**定（用户 2026-09-18 指定）：红带配白字、绿带配黑字。
-        let (runBase, runFg) = vividBanner(hue: 0.00, alpha: bannerAlpha, ink: .white)
-        let (doneBase, doneFg) = vividBanner(hue: 1.0 / 3.0, alpha: bannerAlpha, ink: grey(0))
-
-        let stateOk = lightPanel ? NSColor(calibratedRed: 0.06, green: 0.54, blue: 0.24, alpha: 1)
-                                 : NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.52, alpha: 1)
-        let stateBad = lightPanel ? NSColor(calibratedRed: 0.79, green: 0.16, blue: 0.13, alpha: 1)
-                                  : NSColor(calibratedRed: 1.00, green: 0.52, blue: 0.44, alpha: 1)
-        let stateRun = lightPanel ? NSColor(calibratedRed: 0.67, green: 0.40, blue: 0.00, alpha: 1)
-                                  : NSColor(calibratedRed: 1.00, green: 0.78, blue: 0.28, alpha: 1)
-        let stateInfo = lightPanel ? NSColor(calibratedWhite: 0.42, alpha: 1)
-                                   : NSColor(calibratedWhite: 0.60, alpha: 1)
+        // 状态图标：全部收进色板（用户 2026-10-04 选）。色板里每种功能色只有一档，
+        // 所以浅色系下这几个对纯白底的对比度天然偏低（红 3.5 / 绿 2.2 / 橙 2.0:1）——
+        // 那是色板的物理属性，不是选错了；它们也只落在行首那一个字符上。
+        let stateOk = ApplePalette.green
+        let stateBad = ApplePalette.red
+        let stateRun = ApplePalette.orange
+        let stateInfo = lightPanel ? ApplePalette.midGray : ApplePalette.gray
 
         return Palette(
             panelFill: fillBase.withAlphaComponent(fillAlpha),
-            panelBorder: (lightPanel ? NSColor.black : NSColor.white).withAlphaComponent(0.16),
+            // 边框用**不透明**的色板色；粗细见 `Look.panelBorderWidth`。
+            // 浅色系用**中灰**（用户 2026-10-04：纯黑在白底上太硬，改成中灰 `#6E6E73`）、深色系仍用纯白。
+            panelBorder: lightPanel ? ApplePalette.midGray : ApplePalette.white,
             primary: primary,
             secondary: secondary,
             alertRunBg: runBase,
@@ -412,6 +522,26 @@ final class HUD: NSObject, NSApplicationDelegate {
     private var headerField: NSTextField!        // 标题 / 测试对象 / 计时（固定不滚）
     private var stepsScroll: NSScrollView!
     private var stepsField: NSTextField!
+    /// 面板当前宽度 —— **按内容算出来的**（用户 2026-10-04：宽度也要随内容自适应），
+    /// 由 `layout()` 每帧更新，上限是屏幕可用宽度。
+    private var panelWidth: CGFloat = Look.width
+    /// 内容区的拖动命中层（见 `ScrollHandle`）。用户要的是"按住把内容拉下来看被截掉的部分，
+    /// 松手后最后一行自动回到窗口最下方"，而面板整体鼠标穿透 —— 所以和色带一样，
+    /// 只能再开一个透明窗口来接鼠标。
+    private var scrollHandle: ScrollHandle!
+    /// 内容区拖动中（此时**不要**自动滚到底，否则跟用户的手抢）。
+    private var isPanningSteps = false
+    /// 拖动起点与窗口高度 —— 把**鼠标行程**映射成**内容行程**用，见 `panSteps`。
+    private var panStartY: CGFloat = 0
+    private var panHeight: CGFloat = 1
+    private var panStartScrollY: CGFloat = 0
+    /// 屏幕上现在是不是我们换上去的"抓紧"光标 —— 用来在 `mouseUp` 丢失时兜底还原。
+    private var grabCursorActive = false
+    /// 上一次观测到的光标名。形状变了才写一次 `scroll.json`，不必每 0.4 秒都写盘。
+    /// 存名字而不是 `NSCursor` 实例 —— 见 `cursorName` 与主循环里的注释。
+    private var lastCursorName = ""
+    /// 回弹动画的定时器（松手后把内容平滑地送回底部）。
+    private var bounceTimer: Timer?
     private var footerField: NSTextField!        // 结论（固定不滚）
     private var timer: Timer?
     private var themeTimer: Timer?
@@ -438,7 +568,8 @@ final class HUD: NSObject, NSApplicationDelegate {
     private var bandDots: [NSTextField] = []
     /// 黄点：折叠成只剩色带一条，再点一下原样回来。
     private var collapsed = false
-    /// 绿点：放大到高度上限、把滚动区撑满，再点回到按内容算的高度。
+    /// 绿点：放大 —— 高度撑到上限、宽度撑到屏幕可用宽；再点一下回到按内容自适应。
+    /// **光撑高度常常没效果**：内容一多，自然高度本身就已经等于上限了（见 `layout()` 里的注释）。
     private var zoomed = false
     /// 当前用哪套配色。默认按"浅背景"起手，第一次采样之后就会纠正。
     /// 最后一次量到的背景亮度 —— 整套配色（颜色 + 四个透明度）都由它推出来。
@@ -489,7 +620,7 @@ final class HUD: NSObject, NSApplicationDelegate {
         containerView.wantsLayer = true
         containerView.layer?.backgroundColor = palette.panelFill.cgColor
         containerView.layer?.cornerRadius = Look.cornerRadius
-        containerView.layer?.borderWidth = 1
+        containerView.layer?.borderWidth = Look.panelBorderWidth
         containerView.layer?.borderColor = palette.panelBorder.cgColor
         // 换前台应用时重新量一次：被测对象常常是跟着当前应用换的。
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -551,7 +682,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         dragHandle.isOpaque = false
         // 不是 `.clear`：完全透明的窗口在窗口服务器眼里"没有可点的东西"，鼠标事件会被跳过。
         // 0.01 的白肉眼看不出来（色带正好整条盖在上面），但让这个窗口在 hit-test 里是实心的。
-        dragHandle.backgroundColor = NSColor(white: 1, alpha: 0.01)
+        // 把手整块是**不可见的命中区**（alpha 0.01）。色值同样取自色板（纯白）：
+        // 它不参与视觉，但在这里留一个裸 RGB 会污染"全项目只有色板取色"这条规矩的审计。
+        dragHandle.backgroundColor = ApplePalette.white.withAlphaComponent(0.01)
         dragHandle.hasShadow = false
         dragHandle.level = .screenSaver
         dragHandle.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
@@ -561,6 +694,7 @@ final class HUD: NSObject, NSApplicationDelegate {
         // （第一版就踩了这个，查窗口列表和权限花了一轮。）
         let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: Look.width, height: 40))
         grip.host = panel
+        grip.hud = self            // 借它管"抓紧 / 还原"光标（与内容区共用同一对方法）
         // 整条链都上 layer：`dots` 是 layer 子视图，而"layer 子视图挂在普通父视图下"这种混合
         // 模式在某些情况下不渲染。与其赌它会自动向上冒泡，不如自己把链上每个视图都设成 layer-backed。
         grip.wantsLayer = true
@@ -575,6 +709,26 @@ final class HUD: NSObject, NSApplicationDelegate {
         grip.lights = lights
         dragHandle.contentView = grip
         dragHandle.orderFrontRegardless()
+
+        // 内容区的拖动命中层 —— 与色带把手同一套路（面板整体必须鼠标穿透，想接鼠标只能另开窗口），
+        // 区别是它**没有任何可见内容**：整块就是一个透明命中区，尺寸由 `layout()` 按需同步
+        // （内容没被截掉时高度是 0，等于不存在）。
+        scrollHandle = ScrollHandle(contentRect: .zero,
+                                    styleMask: [.nonactivatingPanel, .borderless],
+                                    backing: .buffered, defer: false)
+        scrollHandle.isOpaque = false
+        // 和色带把手一样不能用 `.clear`：完全透明的窗口在窗口服务器眼里"没有可点的东西"，
+        // 鼠标事件会被直接跳过（0.01 的白肉眼看不出来，但让它成为实心命中区）。
+        scrollHandle.backgroundColor = ApplePalette.white.withAlphaComponent(0.01)
+        scrollHandle.hasShadow = false
+        scrollHandle.level = .screenSaver
+        scrollHandle.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        let scroller = ScrollGrip(frame: .zero)
+        scroller.hud = self
+        scroller.wantsLayer = true
+        scrollHandle.contentView = scroller
+        scrollHandle.orderFrontRegardless()
+
         // 显示之前先量一次：第一帧就是对的，不闪。
         refreshTheme()
         // 0.7 秒：底图是"面板下方此刻的样子"，周期越短越追得上正在变化的背景。
@@ -584,7 +738,18 @@ final class HUD: NSObject, NSApplicationDelegate {
         RunLoop.current.add(themeTimer!, forMode: .common)
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            self?.render()
+            guard let self else { return }
+            // **看门狗**：鼠标早就松开了、`mouseUp` 却没回到拖动命中层时收尾。
+            // 实测踩到过：把内容拖到屏幕最底边会惊动 Dock，`mouseUp` 被它截走 —— 于是
+            // `isPanningSteps` 一直停在 true，而 `scrollStepsToBottom()` 正是被它挡着的，
+            // 面板从此再也不自动滚到底（新步骤进来也不跟）。
+            // 直接问硬件"左键还按着吗"比信任事件关联可靠 —— 和 `DragGrip` 里那条兜底同一个道理。
+            if NSEvent.pressedMouseButtons & 0x1 == 0 {
+                // `mouseUp` 没回来的两种后果都要收：状态卡在"拖动中"，或光标卡在"抓紧"。
+                if self.isPanningSteps { self.endPanningSteps() }
+                self.restoreGrabCursor()
+            }
+            self.render()
         }
         RunLoop.current.add(timer!, forMode: .common)
     }
@@ -672,10 +837,6 @@ final class HUD: NSObject, NSApplicationDelegate {
     private func layout(alert: NSAttributedString, head: NSAttributedString, body: NSAttributedString, foot: NSAttributedString) {
         guard let screen = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
         let topInset = max(0, topInsetArg)
-        // 高度上限：既要 62% 屏高，也要顶边让开工具栏、底边不压状态栏。
-        let maxHeight = min(screen.height * Look.maxHeightRatio,
-                            screen.height - max(topInset, Look.screenMargin) - Look.bottomInset)
-        let innerWidth = Look.width - Look.inset * 2
         let gap = Look.groupGap
 
         func height(_ s: NSAttributedString, _ w: CGFloat) -> CGFloat {
@@ -683,6 +844,35 @@ final class HUD: NSObject, NSApplicationDelegate {
             return ceil(s.boundingRect(with: NSSize(width: w, height: .greatestFiniteMagnitude),
                                        options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
         }
+
+        // ---- 宽度：按内容算（用户 2026-10-04）----
+        // 不折行时的**最宽一行**就是内容的自然宽度；加上左右内边距，再夹进 [minWidth, 屏幕可用宽度]。
+        // 上限留出 `sideInset`，面板永远不贴屏幕边 —— 这是"确保不被遮挡"的横向那一半。
+        func naturalWidth(_ s: NSAttributedString) -> CGFloat {
+            guard s.length > 0 else { return 0 }
+            return ceil(s.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                                    height: CGFloat.greatestFiniteMagnitude),
+                                       options: [.usesLineFragmentOrigin, .usesFontLeading]).width)
+        }
+        let maxWidth = max(Look.minWidth, screen.width - Look.sideInset * 2)
+        let wantedWidth = max(naturalWidth(head),
+                              naturalWidth(body) + 10,      // 步骤有一档缩进 + 行首 mark 的余量
+                              naturalWidth(foot),
+                              naturalWidth(alert) + TrafficLights.reservedWidth)
+            + Look.inset * 2
+        panelWidth = min(max(wantedWidth, Look.minWidth), maxWidth)
+
+        // 绿点"放大"：**连宽度一起撑满**。
+        // 高度这一维经常已经没有余量 —— 2026-10-04 把上限从"屏高 62%"放开到整块可用高度之后，
+        // 内容一多，自然高度本身就等于上限，只撑高度会点下去毫无反应（用户实测反馈"绿点不起作用"）。
+        // 撑满宽度总是看得见效果；而且宽度一变，文字重新折行、行数变少，
+        // 反而更接近绿点原本"步骤多时一眼看全"的用意。
+        if zoomed { panelWidth = maxWidth }
+
+        // ---- 高度：上限改成**整块屏幕可用高度**（用户 2026-10-04：不再卡在 62%）----
+        // 仍旧顶边让开工具栏、底边不压状态栏 —— 即"最大不超过系统提供的窗口高度"。
+        let maxHeight = max(96, screen.height - max(topInset, Look.screenMargin) - Look.bottomInset)
+        let innerWidth = panelWidth - Look.inset * 2
         // 色带左边要放三个圆点，文字得从它们右边开始 —— 量高度时就得按缩窄后的宽度算，
         // 否则文字按全宽排好版、再塞进窄框里又会折行，高度和实测对不上。
         let alertTextH = height(alert, innerWidth - TrafficLights.reservedWidth)
@@ -700,13 +890,13 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         let oldTop = panel.frame.maxY
         panel.setFrame(NSRect(x: panel.frame.origin.x, y: panel.frame.origin.y,
-                              width: Look.width, height: total), display: true)
-        panel.contentView?.frame = NSRect(x: 0, y: 0, width: Look.width, height: total)
+                              width: panelWidth, height: total), display: true)
+        panel.contentView?.frame = NSRect(x: 0, y: 0, width: panelWidth, height: total)
         blurView.frame = panel.contentView?.bounds ?? .zero
         containerView.frame = panel.contentView?.bounds ?? .zero
 
         // 色带通栏；文字在自己的高度里居中 —— 不再靠段落间距去"顶"，那是顶不下来的。
-        alertBand.frame = NSRect(x: 0, y: total - alertH, width: Look.width, height: alertH)
+        alertBand.frame = NSRect(x: 0, y: total - alertH, width: panelWidth, height: alertH)
         // 圆点在色带里垂直居中、从左边依次排开。色带高度会随文字折行变，所以每次布局都得重摆。
         let dotStep = TrafficLights.diameter + TrafficLights.gap
         // **必须把圆点提到最上层。** 色带和四个文字视图都是后加进 `containerView` 的，
@@ -725,7 +915,7 @@ final class HUD: NSObject, NSApplicationDelegate {
                                width: dotBox, height: dotBox)
         }
         alertField.frame = NSRect(x: TrafficLights.reservedWidth, y: total - alertH + Look.bandPad,
-                                  width: Look.width - TrafficLights.reservedWidth, height: alertTextH)
+                                  width: panelWidth - TrafficLights.reservedWidth, height: alertTextH)
         headerField.frame = NSRect(x: Look.inset, y: total - alertH - gap - headH,
                                    width: innerWidth, height: headH)
         stepsScroll.frame = NSRect(x: Look.inset, y: Look.inset + (footH > 0 ? footH + gap : 0),
@@ -737,11 +927,6 @@ final class HUD: NSObject, NSApplicationDelegate {
             view?.isHidden = collapsed
         }
 
-        // 导出几何时用的是**全屏**顶边，不是这里的 `screen` —— 那是 visibleFrame，少了菜单栏那 30 点。
-        // 面板的 NS 坐标以全屏为基准，拿 visibleFrame 去换算，观测工具就会在比面板实际位置
-        // **高 30 点**的矩形里裁图（量出来的数字一直带着这层偏差，查了很久）。
-        exportFrame(screen: (panel.screen ?? NSScreen.main)?.frame ?? screen)
-
         // 面板高度变了：立刻重采底图，别等下一个周期，否则这段时间底图与面板区域不对应。
         if abs(total - laidOutHeight) > 1 {
             laidOutHeight = total
@@ -750,7 +935,7 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         if !placed {
             placed = true
-            panel.setFrameOrigin(origin(for: NSSize(width: Look.width, height: total), on: screen))
+            panel.setFrameOrigin(origin(for: NSSize(width: panelWidth, height: total), on: screen))
         } else {
             panel.setFrameOrigin(NSPoint(x: panel.frame.origin.x, y: oldTop - total))
         }
@@ -759,13 +944,33 @@ final class HUD: NSObject, NSApplicationDelegate {
         // 拖动过程中这个同步不会和拖动打架 —— 它读的就是已经被拖到的位置，只是把把手对齐上去。
         if let handle = dragHandle {
             let band = NSRect(x: panel.frame.minX, y: panel.frame.maxY - alertH,
-                              width: Look.width, height: max(0, alertH))
+                              width: panel.frame.width, height: max(0, alertH))
             // `display: true` 不能省。这个窗口是 0 尺寸创建的，尺寸改了却不重绘的话，
             // 屏幕上不会出现任何东西 —— 里面的层（三个圆点）也就一直空白（踩过）。
             if handle.frame != band { handle.setFrame(band, display: true) }
             // 圆点的尺寸**不在这里**同步 —— 见 `DragGrip.resizeSubviews()`。这段代码只在面板内容
             // 变化时才跑，拿它当同步点会让圆点一直停在 .zero（踩过）。
         }
+        // 内容区的拖动命中层：**只在内容真的被截掉时才启用**，其余时候保持 0 高度 ——
+        // "面板压在别人身上、底下的应用照样能点"是这个浮层存在的前提，
+        // 不能因为加了拖动就把整块面板变成吃鼠标的。
+        // 判据两条：面板总高被上限夹过（`wanted > total`），或步骤区装不下正文（`bodyH > stepsH`）。
+        let overflowing = !collapsed && (wanted > total + 1 || bodyH > stepsH + 1)
+        if let scroll = scrollHandle {
+            let area = overflowing
+                ? NSRect(x: panel.frame.minX, y: panel.frame.minY,
+                         width: panel.frame.width, height: max(0, total - alertH))
+                : NSRect(x: panel.frame.minX, y: panel.frame.minY, width: panel.frame.width, height: 0)
+            if scroll.frame != area { scroll.setFrame(area, display: false) }
+        }
+        // 导出几何 —— **必须放在所有 `setFrameOrigin` 之后**。
+        // 踩过：原先它在最前面，于是首次放置时报的是**移动前**的位置（面板随后会被挪到候选点），
+        // 而内容不再变化就不会再进 `layout()` —— 观测文件能一直停在旧坐标上。
+        // 按它算出来的点击坐标会全部打空，看上去就像"圆点点了没反应"（2026-10-04 查了很久）。
+        // 另外这里传的是**全屏**顶边、不是 `screen`（那是 visibleFrame，少了菜单栏那 30 点）：
+        // 面板的 NS 坐标以全屏为基准，拿 visibleFrame 去换算会让观测工具在**高 30 点**的矩形里裁图。
+        exportFrame(screen: (panel.screen ?? NSScreen.main)?.frame ?? screen)
+
         panel.invalidateShadow()
     }
 
@@ -986,6 +1191,30 @@ final class HUD: NSObject, NSApplicationDelegate {
             "bannerFgVsBanner": Theme.contrast(bannerShown, Theme.luminance(palette.alertRunFg)),
             "primaryVsPanel": Theme.contrast(panelLum, primaryLum),
             "secondaryVsPanel": Theme.contrast(panelLum, secondaryLum),
+            // —— 这一帧实际用的每一个颜色（hex）—— 核对"有没有色板外的颜色"直接看这里，不靠截图猜。
+            // `panelFill` / 色带都带 alpha，所以它们的 hex 是**基色**，屏幕上量到的还要与背景混合
+            // （用户 2026-10-04 选择保留半透明 + 模糊底图，这条差异是知情的）。
+            "palette": [
+                "panelFillBase": Theme.hexString(fill),
+                "panelFillAlpha": fill.alphaComponent,
+                "panelBorder": Theme.hexString(palette.panelBorder),
+                "primary": Theme.hexString(palette.primary),
+                "secondary": Theme.hexString(palette.secondary),
+                "alertRunBg": Theme.hexString(palette.alertRunBg),
+                "alertRunBgAlpha": palette.alertRunBg.alphaComponent,
+                "alertDoneBg": Theme.hexString(palette.alertDoneBg),
+                "alertDoneBgAlpha": palette.alertDoneBg.alphaComponent,
+                "alertRunFg": Theme.hexString(palette.alertRunFg),
+                "alertDoneFg": Theme.hexString(palette.alertDoneFg),
+                "stateOk": Theme.hexString(palette.stateOk),
+                "stateBad": Theme.hexString(palette.stateBad),
+                "stateRun": Theme.hexString(palette.stateRun),
+                "stateInfo": Theme.hexString(palette.stateInfo),
+                "trafficLights": TrafficLights.colors.map { Theme.hexString($0) },
+                "trafficStroke": Theme.hexString(TrafficLights.strokeColor),
+            ] as [String: Any],
+            // 色板全集 —— 核对端直接拿它当白名单，不需要自己再维护第二份色值表。
+            "paletteAll": ApplePalette.all.map { ["name": $0.name, "hex": Theme.hexString($0.color)] },
             "panelW": panel.frame.width, "panelH": panel.frame.height,
             "sampledW": sampledSize.width, "sampledH": sampledSize.height,
             "blurW": blurView.image?.size.width ?? 0, "blurH": blurView.image?.size.height ?? 0,
@@ -1031,11 +1260,177 @@ final class HUD: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 内容滚到最底 —— **最后一行贴着窗口下沿**，这是面板的默认站位。
     private func scrollStepsToBottom() {
+        // 用户正按着拖、或松手后的回弹还没跑完时，**别去抢**滚动位置（那会跟他的手打架）。
+        guard !isPanningSteps, bounceTimer == nil else { return }
         let clip = stepsScroll.contentView
         let maxY = max(0, stepsField.frame.height - clip.bounds.height)
         clip.scroll(to: NSPoint(x: 0, y: maxY))
         stepsScroll.reflectScrolledClipView(clip)
+        exportScroll()
+    }
+
+    // MARK: 内容区的手动拖动（用户 2026-10-04 要求）
+
+    // 面板高度有上限，内容多了上面的部分会被推到可视区之外。用户按住内容区往下拉，
+    // 就能把那些内容拉回来看到；松手后自动送回底部 —— "最后一行回到窗口最下方"。
+
+    /// 按下可拖拽的地方时，把光标换成"抓紧"的手（用户 2026-10-04 要求：
+    /// "不管是色带还是主体，鼠标按下时改变箭头形状提醒可以拖拽，松开后恢复原状"）。
+    ///
+    /// 两处拖拽 —— 色带（拖整个面板）与内容区（拖内容）—— **共用这一对方法**，所以形状一致。
+    /// 悬停时的"张手"由基类 `GrabCursorView` 的 tracking area 负责（那里写了为什么不能用 cursor rect）。
+    func showGrabCursor() {
+        grabCursorActive = true
+        NSCursor.closedHand.set()
+        noteCursor("closedHand")
+    }
+
+    /// 松开（或发现按键其实早就松了）时还原。
+    ///
+    /// **鼠标还在可拖区里就回到"张手"，不要一律设成箭头** —— 这是用户报的"光标有时候没有及时改变"
+    /// 的第二个来源：拖完色带手往往没挪开，这时显示箭头是错的，而且因为鼠标已经在区域内，
+    /// 也不会再有 `mouseEntered` 来纠正它。
+    func restoreGrabCursor() {
+        guard grabCursorActive else { return }
+        grabCursorActive = false
+        if mouseOverGrabArea() {
+            NSCursor.openHand.set()
+            noteCursor("openHand")
+        } else {
+            NSCursor.arrow.set()
+            noteCursor("arrow")
+        }
+    }
+
+    /// 观测端记录"刚把光标设成了什么"。
+    ///
+    /// 由 `GrabCursorView.use(_:_:)` 和上面两个方法在**设置的那一刻**调用 —— 不能等主循环去采样
+    /// `NSCursor.current`：实测那样读到的总是上一次的结果，导出的值滞后一步，看起来像"光标没及时变"。
+    func noteCursor(_ name: String) {
+        lastCursorName = name
+        exportScroll()
+    }
+
+    /// 鼠标现在是不是压在某块可拖区上（色带把手 / 内容区命中层）。
+    /// 用全局坐标比 —— `NSEvent.mouseLocation` 与 `NSWindow.frame` 是同一套（屏幕左下原点）。
+    private func mouseOverGrabArea() -> Bool {
+        let p = NSEvent.mouseLocation
+        if let h = dragHandle, h.frame.contains(p) { return true }
+        if let s = scrollHandle, s.frame.height > 0, s.frame.contains(p) { return true }
+        return false
+    }
+
+    /// 按下：停掉还在跑的回弹，进入"手动"状态，并记下起点。
+    ///
+    /// `y` 与 `height` 都是**内容区窗口内**的坐标（左下原点、向上为正）。
+    func beginPanningSteps(atY y: CGFloat, height: CGFloat) {
+        bounceTimer?.invalidate()
+        bounceTimer = nil
+        isPanningSteps = true
+        panStartY = y
+        panHeight = max(1, height)
+        panStartScrollY = stepsScroll.contentView.bounds.origin.y
+    }
+
+    /// 拖动中：内容跟着鼠标走 —— **自然滚动**方向（往下拖＝把内容拉下来，看上面被截掉的部分）。
+    ///
+    /// 但**不是 1:1 位移**。用户实测发现 1:1 时"永远看不到第一行"：鼠标能走的行程就是内容区高度
+    /// （约 805 点），而内容可滚动的行程常常是它的好几倍（实测 `maxY` = 1031），鼠标顶到屏幕底部时
+    /// 离第一行还差一大截。所以这里改成**把鼠标行程映射到内容全程**：
+    ///   · 从按下点往下拖到**窗口底边** → 内容正好滚到 `0`（第一行）；
+    ///   · 从按下点往上推到**窗口顶边** → 内容正好滚到 `maxY`（最后一行）。
+    /// 代价是拖动比手指"快"（增益 ≈ 内容行程 ÷ 鼠标行程），换来的是两端都够得着。
+    func panSteps(toY y: CGFloat) {
+        guard !collapsed, isPanningSteps else { return }
+        let clip = stepsScroll.contentView
+        let maxY = max(0, stepsField.frame.height - clip.bounds.height)
+        guard maxY > 0 else { return }          // 内容没被截，拖了也没东西可看
+
+        let dy = y - panStartY
+        var target: CGFloat
+        if dy < 0 {
+            // 往下拖：内容下移（`scrollY` 变小），走到窗口底边**之前**就到 0。
+            // 取 0.85 而不是整段行程：鼠标真的顶到屏幕最底边会惊动 Dock（实测 `mouseUp` 会被它截走），
+            // 所以让"接近底部"就等于到底 —— 用户不必把鼠标压到屏幕边缘。
+            // 行程下限 60 点：鼠标本来就贴着底边按下时，免得增益大到一碰就跳。
+            let travel = max(60, (panHeight - panStartY) * 0.85)
+            target = panStartScrollY * (1 - min(1, -dy / travel))
+        } else {
+            // 往上推：内容上移（`scrollY` 变大），走到窗口顶边时正好为 `maxY`。
+            let travel = max(60, panStartY)
+            target = panStartScrollY + (maxY - panStartScrollY) * min(1, dy / travel)
+        }
+        target = min(max(0, target), maxY)
+        clip.scroll(to: NSPoint(x: 0, y: target))
+        stepsScroll.reflectScrolledClipView(clip)
+        exportScroll()
+    }
+
+    /// 松手：平滑地把内容送回底部（"最后一行自动回到窗口最下方"）。
+    ///
+    /// 用定时器逐帧插值、而不是 `animator()`：`NSClipView` 的 bounds 动画在
+    /// "自己调 `scroll(to:)` + `reflectScrolledClipView`"这套滚动方式下不可靠，逐帧每次都落得准。
+    func endPanningSteps() {
+        isPanningSteps = false
+        restoreGrabCursor()
+        guard !collapsed else { return }
+        let clip = stepsScroll.contentView
+        let from = clip.bounds.origin.y
+        let duration: TimeInterval = 0.28
+        let start = Date().timeIntervalSince1970
+        bounceTimer?.invalidate()
+        bounceTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let c = self.stepsScroll.contentView
+            // **每帧重算目标**：回弹这 0.28 秒里若进了新步骤，正文高度会变，
+            // 目标得跟着走，否则会停在旧底部、差出半屏。
+            let target = max(0, self.stepsField.frame.height - c.bounds.height)
+            let p = min(1, (Date().timeIntervalSince1970 - start) / duration)
+            let eased = 1 - pow(1 - p, 3)        // ease-out：起步快、最后轻轻贴住
+            c.scroll(to: NSPoint(x: 0, y: from + (target - from) * CGFloat(eased)))
+            self.stepsScroll.reflectScrolledClipView(c)
+            if p >= 1 {
+                timer.invalidate()
+                self.bounceTimer = nil
+                self.exportScroll()
+            }
+        }
+    }
+
+    /// 面板被手动拖走之后，几何要立刻落盘。
+    /// `exportFrame` 平时只在 `layout()` 里跑，而**拖动不触发 layout** —— 观测端会一直读到拖动前的位置。
+    func exportCurrentFrame() {
+        guard let screen = (panel.screen ?? NSScreen.main)?.frame else { return }
+        exportFrame(screen: screen)
+    }
+
+    /// 把滚动状态写到磁盘（`~/.dsh/dsh-testhud/scroll.json`）。
+    ///
+    /// 拖动与回弹**光看截图判不出来** —— 内容一直在动，一张截图只能说明某一帧。有了这几个数就能断言
+    /// "拖到了哪个位置""松手后有没有真的回到最底"，这也是这个项目一贯的做法：先观测，不要猜。
+    private func exportScroll() {
+        let clip = stepsScroll.contentView
+        let maxY = max(0, stepsField.frame.height - clip.bounds.height)
+        let info: [String: Any] = [
+            "scrollY": clip.bounds.origin.y,
+            "maxY": maxY,
+            "contentH": stepsField.frame.height,
+            "viewH": clip.bounds.height,
+            "atBottom": abs(clip.bounds.origin.y - maxY) < 0.5,
+            "panning": isPanningSteps,
+            "bouncing": bounceTimer != nil,
+            // 光标形状：**记的是"我们最后一次把它设成了什么"**，不是现场采样 `NSCursor.current`
+            //（那样读到的总是上一次的结果，滞后一步）。截图不含鼠标指针，这是唯一的验收口径。
+            "cursor": lastCursorName,
+            "updatedAt": Date().timeIntervalSince1970,
+        ]
+        let dir = NSHomeDirectory() + "/.dsh/dsh-testhud"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
+            try? data.write(to: URL(fileURLWithPath: dir + "/scroll.json"))
+        }
     }
 
     // MARK: 文案
@@ -1062,9 +1457,12 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 控制权提示 —— **这是这块浮层存在的首要理由**：让人知道现在能不能碰鼠标键盘。
     private func handoffLine(_ status: String) -> String {
         switch status {
-        case "done":   return "✅ 已结束，可以收回鼠标键盘的控制权了"
-        case "failed": return "⚠️ 已结束（有失败），可以收回控制权；结论见下方"
-        default:       return "🖱️⌨️ 正在进行：先别动鼠标键盘，以免打断测试"
+        // 色带上这三行也**不带彩色 emoji**（同 `Look.Mark` 的理由：色板规矩）。
+        // 原来的 run 态前面是 "🖱️⌨️" 两个彩色 emoji，已去掉 —— 紧跟其后的文字本来就写着
+        // "鼠标键盘"，留着只是重复，还白添两处色板外的颜色。
+        case "done":   return "\(Look.Mark.ok) 已结束，可以收回鼠标键盘的控制权了"
+        case "failed": return "\(Look.Mark.warn) 已结束（有失败），可以收回控制权；结论见下方"
+        default:       return "正在进行：先别动鼠标键盘，以免打断测试"
         }
     }
 
@@ -1097,10 +1495,11 @@ final class HUD: NSObject, NSApplicationDelegate {
             let mark: String, markColor: NSColor
             switch step.state ?? "info" {
             // `ok` 与 `pass` 都是"这步过了"：bash 版脚本写的是 ok，别让它显示成灰点。
-            case "pass", "ok": mark = "✅"; markColor = palette.stateOk
-            case "fail":       mark = "❌"; markColor = palette.stateBad
-            case "run":        mark = "⏳"; markColor = palette.stateRun
-            default:           mark = "•";  markColor = palette.stateInfo
+            // `ok` 与 `pass` 都是"这步过了"：bash 版脚本写的是 ok，别让它显示成灰点。
+            case "pass", "ok": mark = Look.Mark.ok;   markColor = palette.stateOk
+            case "fail":       mark = Look.Mark.bad;  markColor = palette.stateBad
+            case "run":        mark = Look.Mark.run;  markColor = palette.stateRun
+            default:           mark = Look.Mark.info; markColor = palette.stateInfo
             }
             let first = Look.para(before: i == 0 ? 0 : Look.stepGap, after: 2)
             out.append(NSAttributedString(string: mark, attributes: [
@@ -1218,6 +1617,60 @@ func dragLog(_ text: String) {
     }
 }
 
+/// 两个拖拽命中层（色带把手、内容区）共用的光标行为：**悬停显示"张手"、移出还原箭头**。
+///
+/// ⚠️ **不能用 `resetCursorRects()` + `addCursorRect(bounds, cursor: .openHand)`**：
+/// AppKit 只会自动应用 **key window** 的光标矩形，而这两个窗口都是 `canBecomeKey = false`
+/// （它们永远不该抢焦点），于是悬停时屏幕上一直是箭头 —— 实测确认过。
+/// 改用 tracking area 并带上 `.activeAlways`：它不依赖窗口激活，鼠标进入就回调。
+class GrabCursorView: NSView {
+    /// 主面板 —— 用来把"光标被设成了什么"记进观测文件（见 `use(_:_:)`）。
+    weak var hud: HUD?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        // `inVisibleRect` 让 AppKit 自己跟着 bounds 走，不用在每次改尺寸时重建。
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .cursorUpdate,
+                                                 .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard NSEvent.pressedMouseButtons & 0x1 == 0 else { return }
+        use("openHand", .openHand)
+    }
+
+    /// **这条不能省** —— 用户报的"光标有时候没有及时改变"主要就是它。
+    ///
+    /// `mouseEntered` 只在**跨过边界**那一瞬间触发。如果鼠标**已经在区域内**，而系统把光标重置成了
+    /// 箭头（从别的窗口切过来、刚松手、或 AppKit 自己刷新了一次），就再也没有 `mouseEntered` 可等 ——
+    /// 屏幕上会一直停着箭头，直到鼠标移出再移进。
+    /// `cursorUpdate` 由 AppKit 在"需要确定这块区域该显示什么光标"时回调，正好补上这个洞；
+    /// 和 `mouseEntered` 一样，只在没按着键时才接管（按着键时归 `closedHand`）。
+    override func cursorUpdate(with event: NSEvent) {
+        guard NSEvent.pressedMouseButtons & 0x1 == 0 else { return }
+        use("openHand", .openHand)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        // 按着不放的时候别抢：拖动中鼠标经常会移出这块区域（拖整个面板时更是到处跑），
+        // 光标必须保持"抓紧"，否则拖到一半突然变回箭头。
+        guard NSEvent.pressedMouseButtons & 0x1 == 0 else { return }
+        use("arrow", .arrow)
+    }
+
+    /// 设置光标，**同时**把名字告诉观测端。
+    ///
+    /// 必须在这里直接记：让主循环去采样 `NSCursor.current` 的话，导出的值会**滞后一步**
+    /// （读到的还是上一次设置的结果），看着像"光标没及时变"，其实只是观测滞后 —— 实测踩过。
+    private func use(_ name: String, _ cursor: NSCursor) {
+        cursor.set()
+        hud?.noteCursor(name)
+    }
+}
+
 /// 色带的拖拽把手 —— 一个**只盖住色带那一条**的透明窗口。
 ///
 /// 为什么不直接在面板上开关鼠标：`ignoresMouseEvents` 是**窗口级**的，macOS 没有"这块穿透、
@@ -1232,7 +1685,7 @@ final class DragHandle: NSPanel {
 }
 
 /// 把手的 contentView —— 真正接住鼠标的地方（为什么不能写在窗口上，见 `DragHandle` 的注释）。
-final class DragGrip: NSView {
+final class DragGrip: GrabCursorView {
     /// 被拖动的主面板。弱引用：把手是面板的附属物，面板没了它不该继续留着。
     weak var host: NSWindow?
 
@@ -1276,6 +1729,7 @@ final class DragGrip: NSView {
     /// 后续的 `mouseDragged` 一次都不会来（只写 dragged 不写 down 同样拖不动）。
     override func mouseDown(with event: NSEvent) {
         lastPoint = NSEvent.mouseLocation
+        hud?.showGrabCursor()          // 按下即"抓紧"：告诉用户这一下能拖动面板
         dragLog("mouseDown global=\(lastPoint)")
     }
 
@@ -1293,6 +1747,8 @@ final class DragGrip: NSView {
 
     override func mouseUp(with event: NSEvent) {
         lastPoint = .zero
+        hud?.restoreGrabCursor()
+        hud?.exportCurrentFrame()   // 拖完的位置立刻落盘，观测端才不会一直拿着旧坐标
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1302,11 +1758,15 @@ final class DragGrip: NSView {
         // 每帧直接问硬件"左键还按着吗"，比信任事件关联可靠得多。
         guard NSEvent.pressedMouseButtons & 0x1 == 1 else {
             lastPoint = .zero
+            hud?.restoreGrabCursor()   // `mouseUp` 没回来时，别把"抓紧"光标留在屏幕上
             return
         }
         // 没有配对的 `mouseDown` 就不该算位移：点在圆点上时 down 被圆点吃掉了，事件却仍会上溯到
         // 这里，而此时 `lastPoint` 还是 `.zero` —— 算出来的"位移"等于鼠标的**绝对坐标**，面板会瞬移。
         guard lastPoint != .zero else { return }
+        // 拖动过程中反复设一次：鼠标移出区域后系统可能把光标改回箭头（`mouseExited` 里已经放行了
+        // "按着键"的情况，但别的窗口或 AppKit 自己仍可能插手），这是最便宜的保险。
+        NSCursor.closedHand.set()
         let now = NSEvent.mouseLocation
         let dx = now.x - lastPoint.x, dy = now.y - lastPoint.y
         lastPoint = now
@@ -1324,6 +1784,61 @@ final class DragGrip: NSView {
     }
 }
 
+/// 内容区的拖动命中层 —— 一个**只盖住"色带以下"那块**的透明窗口（用户 2026-10-04 要求）。
+///
+/// 为什么又开一个窗口：面板必须整体鼠标穿透（它压在被测界面之上，一旦吃了点击，底下那个应用
+/// 就没法操作了），而 `ignoresMouseEvents` 是**窗口级**的 —— 想做到"这块能拖、其余照旧穿透"，
+/// 只能另开一个窗口盖上去。色带那一条是同一个道理（见 `DragHandle`）。
+///
+/// **它只在内容真被截掉时才出现**：尺寸由 `HUD.layout()` 判定并同步，其余时候高度为 0。
+/// 代价说清楚：内容溢出的那段时间里，面板内容区这一块**不再穿透** —— 在那儿点一下会被它吃掉，
+/// 换来的就是"按住把上面的内容拉下来看"。内容装得下时它完全不存在，穿透照旧。
+final class ScrollHandle: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// 拖动命中层的 contentView —— 真正接住鼠标的地方（为什么不能写在窗口上，见 `DragGrip` 的注释）。
+final class ScrollGrip: GrabCursorView {
+    private var lastPoint: NSPoint = .zero
+
+    /// 和 `DragGrip` 同一个理由：app 是 `.accessory`、窗口永不成为 key，
+    /// 每一次点击在 AppKit 眼里都是 "first mouse"，默认会被吞掉 —— 不返回 true 一次都拖不动。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// 位移用 `event.locationInWindow` 自己算，**不用 `event.deltaY`**：
+    /// 合成事件（CGEvent —— 自动化测试用的就是它）里 delta 恒为 **0**，只有真人拖动才有值。
+    ///
+    /// 这里能用窗口内坐标、而 `DragGrip` 必须用全局 `mouseLocation`，是因为**这个窗口在拖动期间不动** ——
+    /// 它只滚内容、不移动面板。用事件自带的位置比读"当前鼠标位置"更准：后者在事件积压时会跨步取值，
+    /// 位移一跳一跳的（实测拖动过程中 scrollY 出现来回抖动）。
+    override func mouseDown(with event: NSEvent) {
+        lastPoint = event.locationInWindow
+        hud?.showGrabCursor()          // 按下即"抓紧"：告诉用户这一下能拖内容
+        hud?.beginPanningSteps(atY: event.locationInWindow.y, height: bounds.height)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        // 兜底：这次的 mouseUp 没回到这个 view 时（合成事件、窗口被挪走），
+        // 每帧直接问硬件"左键还按着吗"，否则会一直停在"拖动中"、松手也不回弹。
+        guard NSEvent.pressedMouseButtons & 0x1 == 1 else {
+            lastPoint = .zero
+            hud?.endPanningSteps()
+            return
+        }
+        guard lastPoint != .zero else { return }
+        NSCursor.closedHand.set()      // 同上：拖动期间一直维持"抓紧"
+        let now = event.locationInWindow
+        lastPoint = now
+        hud?.panSteps(toY: now.y)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastPoint = .zero
+        hud?.endPanningSteps()
+    }
+}
+
 /// 色带左端的三个圆点 —— 红关闭 / 黄折叠 / 绿缩放，配色和尺寸照 macOS 自己的来。
 ///
 /// 为什么画在把手窗口里（见 `DragHandle`）：主面板整体鼠标穿透，整块浮层只有把手那一条能接鼠标，
@@ -1336,40 +1851,40 @@ final class TrafficLights: NSView {
 
     var onLamp: ((Lamp) -> Void)?
 
-    /// macOS 自己的取值：#FF5F57 / #FEBC2E / #28C840。
+    /// **2026-10-04 起改取 Apple 色板**（原先用的是 macOS 系统取值 #FF5F57 / #FEBC2E / #28C840，
+    /// 那三个不在色板里）。语义不变，仍是"红关掉 / 黄折叠 / 绿放大"：
+    /// 红 `#FF3B30`、黄 `#FFCC00`、绿 `#34C759`。
     /// 不是 private —— 主面板要用同一组颜色画它那份圆点（见 `HUD.bandDots`）。
     static let colors = [
-        NSColor(srgbRed: 1.00, green: 0.373, blue: 0.341, alpha: 1),
-        NSColor(srgbRed: 0.996, green: 0.737, blue: 0.180, alpha: 1),
-        NSColor(srgbRed: 0.157, green: 0.784, blue: 0.251, alpha: 1),
+        ApplePalette.red,
+        ApplePalette.yellow,
+        ApplePalette.green,
     ]
 
     static let diameter: CGFloat = 12
     static let gap: CGFloat = 8
     static let leading: CGFloat = 14
 
-    /// 圆点的描边（2026-09-18）。**宽度 1.0 点、颜色白** —— 这是用户看过四版实测后选的，
-    /// 不是按"对比度最优"选的，所以先把它的含义写清楚。
+    /// 圆点的描边。**宽度 1.0 点、颜色纯白 `#FFFFFF`** —— 白色本身就在色板里，符合新规矩，故未改色。
+    /// 但色带换成色板值之后底下的数字变了，这里按**实测呈现色**如实更新（2026-10-04，WCAG 口径）：
+    /// 色带是 0.75 不透明的，屏幕上量到的不是基色 —— 红带浅底实测 `#FF776F`、深底 `#CE382F`；
+    /// 环对**这个呈现色**的对比度（浅色面板 / 深色面板）：
+    ///   · 白环 vs 红带 → 2.58 / 4.96
+    ///   · 白环 vs 绿带 → 1.84 / 3.48      （绿带按 0.75 混合推算：浅 `#66D583`、深 `#2E9D4B`）
+    ///   · 黑环 vs 红带 → 8.15 / 4.23
+    ///   · 黑环 vs 绿带 → 11.41 / 6.04
+    /// 即**黑环在四种情形里全面优于白环**，其中"白环 vs 浅底绿带"只有 1.84:1，等于没有描边。
+    /// 之所以仍然用白：这是用户 2026-09-18 看过四版实拍后拍板的（"黑色难看"）；
+    /// 本次的要求只规定了"颜色必须来自色板"（黑白都在色板内），并没有推翻那个审美选择。
+    /// **要换黑环只需要改下面这一个常量**，数据已经备好 —— 但别擅自改，先问。
     ///
-    /// 起因：色带固定成鲜红 / 鲜绿之后，红点落在鲜红底上会融成一片 —— 实测红点 `RGB(242,96,82)`
-    /// 对底色 `RGB(213,70,56)` 只有 **1.03:1**，而红点是鼠标关掉浮层的唯一入口；done 态的绿点
-    /// 也从"清楚"退成"勉强看得出"。黄点两态都没事，但三颗点必须长得一样，否则"红黄绿"这组语义就散了。
-    ///
-    /// 当天试了四版，环对色带底的对比度（浅底 / 深底）：
-    ///   · 1.5 点 黑 0.85  → 4.57 / ~7.0   效果最好，但用户看后说"黑色难看"
-    ///   · 1.0 点 黑 0.75  → 3.22 / 1.97   用户先选的折中：深底不达标（半透明让红点透上来抬亮了环）
-    ///   · 1.0 点 黑 1.00  → 11.21 / 7.00  数据最好，但仍然是黑
-    ///   · 1.0 点 白 1.00  → 2.39 / 3.11   ← **最终选它**：用户要白，并接受"浅底上红点仍不明显"
-    ///
-    /// **两个必须记住的物理事实**：
-    ///   1. 对比度由**颜色**决定，与描边宽度**无关**。白变细不会更清楚，只会更不显眼
-    ///      （环的像素数 468 → 252）。白环对鲜红底无论多粗都只有 ~2:1，因为色带永远是高饱和
-    ///      亮色（饱和与明度钉在 1.0）。
-    ///   2. 深色描边在这个色带上**始终是白环的 3 倍以上**（色带呈现亮度只落在 0.21~0.84）。
-    ///      要"既好看又看得见"，只有换成深色这一条路。
-    /// 所以现在的状态是一次**知情的取舍**，不是没修好 —— 别"顺手修好"它而不先问用户。
+    /// 两个与颜色无关、但必须记住的物理事实：
+    ///   1. 对比度由**颜色**决定，与描边宽度**无关**；白变细不会更清楚，只会更不显眼。
+    ///   2. 红点与红带现在是**同一个色板色**（`#FF3B30` 对 `#FF3B30`），带底又被 0.75 的不透明度
+    ///      稀释过，实测两者只差 **1.38:1** —— 描边是红点唯一的辨识手段，不能删。
     private static let strokeWidth: CGFloat = 1.0
-    private static let strokeColor = NSColor.white
+    /// 不是 private：观测端（`exportTheme`）要把它导出去核对"有没有色板外的颜色"。
+    static let strokeColor = ApplePalette.white
     /// 含描边的外径。frame 要用这个尺寸（见 `layoutDots`）。
     static var outerDiameter: CGFloat { diameter + 2 * strokeWidth }
 

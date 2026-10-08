@@ -1,38 +1,21 @@
 # dsh-testhud
 
-An always-on-top, click-through progress panel for automated tests in [DeepSeek Harness](https://github.com/deepseek-ai) (dsh),
-drawn **over the app under test** — plus the `test_hud` tool that drives it from any session.
+An always-on-top, click-through progress panel for automated tests in [DeepSeek Harness](https://github.com/deepseek-ai) (dsh), drawn **over the app under test** — plus the `test_hud` tool that drives it from any session.
 
 ![the panel](assets/panel.png)
 
 ## Why it exists
 
-When an agent drives a GUI, compares screenshots or renders a batch for a few minutes, the human just sits there:
-they cannot tell which step it is on, what the step expects, whether it already failed, or — the question that actually
-matters — **whether it is safe to touch the mouse and keyboard again**.
+When an agent drives a GUI, compares screenshots or renders a batch for a few minutes, the human just sits there: they cannot tell which step it is on, what the step expects, whether it already failed, or — the question that actually matters — **whether it is safe to touch the mouse and keyboard again**.
 
 This panel answers exactly that, on screen, without stealing focus:
 
 - **What is being tested** — title, target, start time and elapsed seconds.
-- **Every step, with expectation and actual result** — one line each, ✅ / ❌ / ⏳ / •
-- **A permanent line about control, at the very top** — the panel's own strings are Chinese; this one reads
-  `🖱️⌨️ 正在进行：先别动鼠标键盘，以免打断测试` while running and `✅ 已结束，可以收回鼠标键盘的控制权了` when done.
-  It is the heaviest text on the panel and the only line carrying a background:
-  **white on vivid red while it is unsafe to touch anything, black on vivid green once you may take over**.
-  Those two band colours are pinned by user request (2026-09-18, replacing amber / teal): hue, saturation and brightness
-  all fixed, opacity 0.75 so what is underneath stays dimly readable. The text colour is picked **by state**, not by
-  contrast — see the band section below.
-- **It never gets in the way**: click-through (the mouse passes straight through), always on top, not in the Dock
-  and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
-- **Move it by hand**: grab the top colour band and drag to put the panel wherever suits you. That band is the only part
-  that is not click-through — it is the drag handle; everything below it still passes the mouse straight through.
-- **Three traffic lights at the band's left end**, the macOS three: **red** closes the panel, **yellow** collapses it
-  down to just the band (click again to restore), **green** expands it to the maximum height (click again to go back
-  to the content height). So it can be put away or enlarged with the mouse, without going back to the tool. Their
-  colours deliberately stay out of the chameleon algorithm — red/amber/green are what people recognise, and a dot
-  that recolours itself with the backdrop stops being recognisable. Each dot now carries a **1.0 pt white stroke**
-  (added 2026-09-18, the version the user picked out of four): once the band became vivid red / green, the red dot on
-  the red band dissolved into it (measured: band vs red dot was **1.03:1**).
+- **Every step, with expectation and actual result** — one line each, ✓ / ✗ / ⏳ / •.
+- **A permanent line about control, at the very top** — the panel's own strings are Chinese; this one reads `正在进行：先别动鼠标键盘，以免打断测试` while running and `✓ 已结束，可以收回鼠标键盘的控制权了` when done. It is the heaviest text on the panel and the only line carrying a background: **white on swatch red `#FF3B30` while it is unsafe to touch anything, black on swatch green `#34C759` once you may take over**. The text colour is picked **by state**, not by contrast — see the swatch section below.
+- **It never gets in the way**: click-through (the mouse passes straight through), always on top, not in the Dock and not in ⌘Tab, and it picks the emptiest corner of the screen so it covers as little of the app under test as possible.
+- **Move it by hand**: grab the top colour band and drag. The band is one of only two places that take the mouse (it is the drag handle); everything else stays click-through, and the content area takes the mouse only when content overflows — see "Size and overflow". **The cursor turns into an open hand over either place and a closed hand while you hold the button, then back on release** — the cursor shape itself is the "you can drag here" hint.
+- **Three traffic lights at the band's left end**, the macOS three: **red** closes the panel, **yellow** collapses it down to just the band (click again to restore), **green** expands it to the usable-area ceiling — full height **and** full width (click again to go back to fitting the content; height alone often has no room left, since with enough content the natural height already equals the ceiling). Their colours are pinned to the swatch — red `#FF3B30`, yellow `#FFCC00`, green `#34C759` — each with a **1.0 pt white stroke**: the red dot and the red band are now the same swatch colour, so the stroke is the dot's only remaining cue.
 
 ## Install
 
@@ -41,19 +24,11 @@ dsh plugin --profile <profile> add link:/path/to/dsh-testhud   # from a checkout
 dsh plugin --profile <profile> add dsh-testhud                 # from the registry
 ```
 
-The Desktop app installs the same way (plugin settings); its plugin manager **mounts a new bundle live** —
-the row is composed immediately and the host is not restarted (verified 2026-09-30). A CLI-launched profile
-composes its bundle list at boot, so restart once unless your profile reloads patches live.
+The Desktop app installs the same way (plugin settings); its plugin manager **mounts a new bundle live** — the row is composed immediately and the host is not restarted. A CLI-launched profile composes its bundle list at boot, so restart once unless your profile reloads patches live.
 
-The package must actually be listed in the profile's `dsh.profile.bundles` (`dsh plugin add` does that for
-you); check that the row really entered the composition with `dsh --profile <profile> --dump-config` — it
-prints a `# == dsh-testhud` layer marker. Every session in that profile then has the `test_hud` tool and the
-short prompt convention.
+The package must actually be listed in the profile's `dsh.profile.bundles` (`dsh plugin add` does that for you); check that the row really entered the composition with `dsh --profile <profile> --dump-config` — it prints a `# == dsh-testhud` layer marker. Every session in that profile then has the `test_hud` tool and the short prompt convention about reporting long tests.
 
-`@deepseek-ai/dsh-tools` is declared as a **peer dependency**: dsh resolves it to the running installation's
-copy (so the plugin always uses the host's own `defineTool`) and refuses the whole bundle when the running
-version falls outside the declared range, instead of half-loading it. The copy in `node_modules` is only a
-devDependency, for tests that run outside the host.
+`@deepseek-ai/dsh-tools` is declared as a **peer dependency**: dsh resolves it to the running installation's copy (so the plugin always uses the host's own `defineTool`) and refuses the whole bundle when the running version falls outside the declared range, instead of half-loading it. The copy in `node_modules` is only a devDependency, for tests that run outside the host.
 
 Uninstall:
 
@@ -71,17 +46,13 @@ dsh plugin --profile web remove dsh-testhud
 | `done` | Writes the conclusion and ends the run | `failed` (boolean), `conclusion` |
 | `stop` | Closes the panel immediately | — |
 
-The panel sizes itself to its content (capped at 62% of the visible screen height), scrolls **only** the step list while
-the header stays fixed, and disappears 12 seconds after `done` — long enough to read the verdict.
+The panel sizes itself to its content in both directions (see "Size and overflow"), scrolls **only** the step list while the header stays fixed, and disappears 12 seconds after `done` — long enough to read the verdict.
 
 ## The rule
 
-**If a verification is running, the panel must be up.** Never "just run the commands" without it: during a series of
-runs, `start` again after a `done` and before the next action. Whoever is waiting must be able to see what is being
-tested and whether it is safe to take back the keyboard.
+**If a verification is running, the panel must be up.** Never "just run the commands" without it: during a series of runs, `start` again after a `done` and before the next action. Whoever is waiting must be able to see what is being tested and whether it is safe to take back the keyboard.
 
-**Clean up afterwards too**: `done` at the end, then **quit the app you launched for the test** (gracefully, not
-`kill -9`) and bring the browser / DSH window back to the front. Do not leave the app under test sitting on screen.
+**Clean up afterwards too**: `done` at the end, then **quit the app you launched for the test** (gracefully, not `kill -9`) and bring the browser / DSH window back to the front. Do not leave the app under test sitting on screen.
 
 ## The CLI
 
@@ -110,212 +81,75 @@ Optional row config in your profile's `cordis.patch.yml` overrides the plugin ro
 
 Where the panel goes is decided in this order:
 
-1. **Do not cover the thing under test.** The panel scores three positions against the frontmost app's windows and
-   takes the one that overlaps least. This outranks everything below.
+1. **Do not cover the thing under test.** The panel scores three positions against the frontmost app's windows and takes the one that overlaps least. This outranks everything below.
 2. **Centre of the screen**, when that blocks nothing.
 3. Otherwise **the side** — left before right.
 
-Vertically it always sits high: the top edge clears the menu bar and toolbars (`topInset`), the bottom edge stops above
-the status bar / Dock (`Look.bottomInset`, 44 pt), and the height cap respects both. Horizontally it stays off the edges
-(`Look.sideInset`, 28 pt) so it cannot sit on a sidebar or a scrollbar. Anchors are `auto | center | left | right`; the
-old `top-left` / `top-right` names still map to `left` / `right`.
+Vertically it always sits high: the top edge clears the menu bar and toolbars (`topInset`), the bottom edge stops above the status bar / Dock (`Look.bottomInset`, 44 pt). Horizontally it stays off the edges (`Look.sideInset`, 28 pt) so it cannot sit on a sidebar or a scrollbar. Anchors are `auto | center | left | right`; the old `top-left` / `top-right` names still map to `left` / `right`.
 
-`topInset` exists because the panel usually floats **over a browser**: the top ~150 pt of the screen are the tab strip,
-the address bar and the bookmarks bar, and a panel there would cover them. The default (155) starts the panel just
-below that chrome — level with the page's own header. Set it to `0` to get the old behaviour (a 14 pt screen margin),
-or to whatever puts the panel where you want it. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
+`topInset` exists because the panel usually floats **over a browser**: the top ~150 pt of the screen are the tab strip, the address bar and the bookmarks bar, and a panel there would cover them. The default (155) starts the panel just below that chrome — level with the page's own header. Set it to `0` to keep only a 14 pt screen margin. `DSH_TESTHUD_TOP_INSET` overrides it for the CLI.
 
-**Everything is computed from what the panel covers.** Every 0.7 s — and immediately whenever the frontmost app
-changes, the panel resizes, or its own content changes (0.5 s debounce) — it measures *the rectangle it is about to
-cover*, and only that rectangle: its average luminance **and its light/dark spread** (p10–p90). Those numbers derive
-the whole appearance: the panel fill and its direction, the luminance of both text greys, the banner's fill and text,
-the panel's opacity, and how flat the ground is flattened. There are no two presets, and **not one colour on the panel
-is a hard-coded constant**.
+### Size and overflow
 
-The trick is the **direction**: the panel goes *with* the backdrop, not against it — a light backdrop gets a lighter
-panel with dark text, a dark backdrop gets a darker panel with white text. Going the other way (a dark panel over a
-light page) is only fixable by piling on opacity, and that is exactly what makes the covered area unreadable.
+**Both dimensions follow the content** (`HUD.layout()`):
 
-What is left after that is a trade-off that **cannot be solved, only spent**: the pixels that give the panel's text
-something to sit on are the same pixels that hide what is underneath. Both ways out were built and measured — per-line
-plates (rejected by the user: the content behind them became unreadable) and making the panel itself as transparent as
-possible (0.10 / 0.20 / 0.35 all leaked 1–3 lines of background text on a dense backdrop, always the text being *typed
-right then*). The floor is therefore **0.50**: on ordinary backdrops the panel's text is far past AAA, and the covered
-region still shows light and shape. On black-on-white text filling the whole screen, that is the limit of "both".
+- **Width** is the widest line at its natural (unwrapped) width plus the left and right insets (`Look.inset`, 16 pt), clamped to a floor of **460 pt** (`Look.minWidth`) and a ceiling of the screen's usable width minus 28 pt on each side (`Look.sideInset`).
+- **Height** follows the content, and is exactly the content height while it fits; the ceiling is the screen's usable height minus the `topInset` the top gives up (155 by default) minus 44 pt at the bottom (`Look.bottomInset`) — **no longer 62% of the screen height**. Yellow collapses the panel to just the band; green expands it to that ceiling **and** to the full usable width.
 
-**The panel's ground is a blurred snapshot of what it covers**, taken in the same sampling pass, blurred with σ=34 and
-desaturated to 0.70. A fully see-through panel has a failure mode of its own: the text underneath stays perfectly
-legible and fights the panel's own text — same size, similar colour, two layers of type in one place. Blurring the
-ground turns that competing text into soft light and shade: you can still tell *something* is there, but it no longer
-competes.
+The height has a ceiling, so with enough content the upper part is pushed outside the visible area. The panel's content area then carries a transparent drag hit layer (the `ScrollHandle` window plus its `ScrollGrip` view): **press and pull downwards to bring the upper content back** (natural scroll direction), and on release it eases back to the bottom over **0.28 s ease-out** — "the last line returns to the bottom of the window". **The hit layer only exists when content is actually cut off** (its height is 0 otherwise), so a panel whose content fits stays fully click-through. The cursor shows an open hand over it and a closed hand while held, reverting on release. Observe it at `~/.dsh/dsh-testhud/scroll.json` (`scrollY` / `maxY` / `atBottom` / `panning` / `bouncing` / `cursor` — the last one because screenshots do not contain the mouse pointer, so the cursor can only be verified this way).
 
-Two things about that ground have to be right, or the panel ends up **choosing text colours for a backdrop that does
-not exist** (this bug took a long time to find). Contrast is compressed **around mid-grey**, so afterwards the image's
-mean is no longer the sampled mean — on a dark backdrop the two differ by a factor of two — and the palette computes
-the panel's own floor from that number. So the mean is **anchored back** to its true value, and that true value is
-**measured** (`CIAreaAverage` rendered to sRGB) rather than derived by formula. The contrast is then scaled by the
-region's **light/dark spread** (p10–p90): the ground keeps the large-scale light and shade, while the panel's text has
-only one colour — a backdrop that is bright on one side and dark on the other leaves half of it wrong whichever
-direction you pick. Flattening adds **no** occlusion (the panel's opacity is untouched); it only costs some of the
-"something is down there" texture.
+### Colours come from the Apple swatch only
 
-Contrast is WCAG-style (`(lighter + 0.05) / (darker + 0.05)`), but it is **not solved to the exact bar**: the lesson
-this project paid for is that a paper 7:1 measures only 6.6–6.8 on screen (CJK strokes are thin, and antialiasing lifts
-the measured luminance), so anything solved "just barely" comes out short.
+**Every colour on the panel must exist in the Apple swatch** — the 22 colours on page 1 of `~/PARA/8.Code/AIDoc/设计规范/Apple色板/1Apple配色色卡.key` (9 neutrals + 3 blues + 10 functional). The single source of truth in code is `ApplePalette` in `hud/testhud.swift`, all built in **sRGB** (`calibrated*` constructors shift the values).
 
-**The text luminances are solved too**, not fixed constants: each is derived from the panel floor's actual luminance
-against `primaryContrast` (9) / `secondaryContrast` (7), clamped to black or white when the floor simply cannot give
-that much. The second grey targets "0.91 × the contrast the first one actually reached" — solving both independently
-would pin them both to pure white on a dark panel, and the two-grey split is this panel's only means of hierarchy.
-The banner **no longer takes part in that solving** (since 2026-09-18, when the user asked for "vivid red and green,
-highly saturated, brighter"): hue, saturation and brightness are all pinned — vivid red 0° = stop, vivid green 120° =
-take over, saturation and brightness both at 1.0 (the extreme for that hue, so "more vivid" can only come from another
-hue or a higher opacity). This is a **deliberate reversal** of the chameleon route above, not a bug in it: solving each
-term against the backdrop is incompatible with staying vivid (a coloured backdrop pulls saturation down, a bright one
-pulls brightness down). The old implementation (`banner()`, amber 0.10 / teal 0.45) is still in `hud/testhud.swift`
-with no callers — to roll back, swap the two calls in `palette()`.
+| Part | Light appearance | Dark appearance |
+|---|---|---|
+| Panel background | white `#FFFFFF` | graphite `#1D1D1F` |
+| Border (1.0 pt, `Look.panelBorderWidth`) | mid grey `#6E6E73` | white `#FFFFFF` |
+| Primary text (title / step name / conclusion) | black `#000000` | white `#FFFFFF` |
+| Secondary text (expect / actual / meta) | mid grey `#6E6E73` | grey `#86868B` |
+| Step marks | ✓ `#34C759` / ✗ `#FF3B30` / ⏳ `#FF9500` / • same as secondary | same |
 
-The **bar's text colour is picked by state** (user's call, 2026-09-18): white on the red band, black on the green one —
-no longer "whichever of black and white reaches more contrast". Measured (text vs band): white on vivid red **2.35:1**
-light / **2.57:1** dark; black on vivid green **18.36:1**. So **the green band is both good-looking and clear**, while
-**white on red is an aesthetic-first trade-off**: 2.35:1 sits below the 3:1 AA bar for large text, carried only by the
-heavy weight and 18 pt size. (Black really is higher there — 8.93:1 on the same red.) The user saw both states live
-before deciding, so **do not "fix" this back to black**.
+The band ignores the light/dark split and follows the state: **running = red `#FF3B30` + white text**, **done = green `#34C759` + black text**; the band's opacity is **0.75**. The three traffic lights are swatch values too (red `#FF3B30`, yellow `#FFCC00`, green `#34C759`) with a 1.0 pt white stroke.
 
-The opacity is **0.75**. At 0.55 "vivid red" simply does not exist — measured, it renders as pink `RGB(246,141,131)`
-with saturation 0.47; at 0.75 it is `RGB(239,98,85)` with saturation 0.65 (light backdrop). The cost is that the few
-lines under the bar go from "clearly readable" to "dimly visible" — the trade-off the user picked on the spot
-(0.85 is the next step: more vivid, but the text under the bar ends up essentially covered).
-**The collision, and what was left of it (2026-09-18)**: each dot got a stroke, and **four versions were measured the
-same day** — ring against band, light / dark backdrop: 1.5 pt black 0.85 → 4.57 / ~7.0 (best, but the user found the
-black edge ugly); 1.0 pt black 0.75 → 3.22 / 1.97 (fails on dark); 1.0 pt black 1.0 → 11.21 / 7.00 (best numbers, but
-still black); **1.0 pt white → 2.39 / 3.11 ← adopted** (the user wanted white and knowingly accepted the cost).
+The step marks are `✓` / `✗` / `⏳` / `•` and **not** `✅` / `❌`: colour emoji ignore `foregroundColor` and paint colours of their own, outside the swatch, so the glyph had to change. By the same token, emoji the caller (an agent) writes into a step name, expect or actual are not governed by `ApplePalette`. White on red vs black on green are deliberately not symmetric in contrast — a **knowing aesthetic trade-off**, so do not "fix" it into a contrast-maximising pick.
 
-Two physical facts worth keeping: **contrast is set by the colour, not the stroke width** — a thinner white stroke is
-not clearer, just less visible; and because the band is always a highly saturated light colour (saturation and
-brightness pinned at 1.0), a dark stroke is **always 3× the white one** on this band.
-**What is left**: on a light backdrop the red dot still sits at 2.39:1 against the band, so "click the red dot to close
-the panel" is effectively unavailable there (use the CLI `stop` / `done` instead). This is a **knowing trade-off**, not
-an unfinished fix.
+**Only two things are still computed**: which appearance to use (`backdrop > 0.35`) and the panel background's opacity (`solveAlpha`, floor **0.50**). The user explicitly kept **translucency + the blurred backdrop**, so white over a backdrop does not measure as `#FFFFFF`; the rule is therefore "**the value comes from the swatch**", not "the rendered pixel equals it". The backdrop is sampled every 0.7 s — *the rectangle the panel is about to cover*, and only that rectangle, plus immediately whenever the frontmost app changes or the panel resizes or changes content — yielding an average luminance and a light/dark spread (p10–p90), which decide the appearance and how flat the blurred ground is flattened. The panel's ground is **a blurred snapshot of what it covers** (σ=34 Gaussian, desaturated to 0.70): it turns the competing text underneath into soft light and shade — you can still tell something is there, but it no longer competes. Compressing its contrast around mid-grey shifts the image's mean, so the mean must be **anchored back to the measured value**, or the panel picks text colours for a backdrop that does not exist.
 
-(The frame uses `diameter + 2 × stroke width`: `CALayer` draws its border **inwards**, so adding it to the 12 pt frame
-eats twice the stroke width and shrinks the colour — the 1.5 pt version measured 452 → 216 px.)
+### (before 2026-10-04) Environment-adaptive palette — disabled
 
-**The bar's text is plain black or white** — no "solve to exactly the target", no tinting. The bar's brightness is
-deliberately pushed up to "bright enough", so pure black is always available there and always higher contrast: with the
-bar showing 0.445, pure black measures **9.90:1** while "solved to the target" gave only 6.50:1 — 3.4:1 given away for
-nothing. (Carrying the panel text's rule over to the bar was simply wrong: the panel floor can land at any luminance,
-the bar cannot.)
-
-Measured (the bar's text vs the band; re-measured 2026-09-18 once the text colour became state-driven): run — white on
-vivid red **2.4:1** light / **2.6:1** dark; done — black on vivid green **18.4:1**. Before that (auto-picked black on the
-amber / teal pair) it was 6.6 / 5.8.
-
-**The colour is solved too, black and white first:**
-
-1. **Whichever of black and white gives more wins** — the two are compared by the contrast each reaches against the
-   panel floor, rather than picked by "is the panel light or dark". Around panelLum ≈ 0.19, black (4.8:1) actually
-   beats white (4.38:1).
-2. **A neutral environment gets neutral text**: below `minTintSat` (0.15) saturation the text stays greyscale. That is
-   the cleanest choice, and black and white are the **endpoints of the luminance range** — no chromatic colour can be
-   more extreme at the same luminance.
-3. **A coloured environment gets its complement** (opposite on the colour wheel). The luminance does not change, so
-   **no contrast figure moves**. What the hue buys is not "clearer" but "the panel's text and the text underneath are
-   no longer the same colour" — and a coloured backdrop is exactly where that happens: two layers of type in one
-   colour, brightness already maxed out, hue the only thing left to separate them.
-4. **When the luminance is clamped to an endpoint** — meaning the floor cannot even give the target contrast, so black
-   and white are already its limit — `tintRelax` (0.05) of luminance is spent to buy a hue. At a clamped luminance no
-   hue solves to any saturation at all, which would amount to not tinting.
-
-Measured on a full screen of solid orange (saturation 0.727): the text took the complementary cyan at 202°, and the
-panel's brightest 2% of pixels `(218,239,251)` measured R−B = −33 while the backdrop's R sits well above its B. The
-price is white text falling from 5.24:1 to 4.62:1.
-
-Measured by `bin/testhud-inspect.py` on the geometry the panel exports itself. **Both backdrops are dense real text**,
-not solid colour — a solid backdrop cannot reproduce the failure this panel exists to avoid:
-
-| backdrop | banner (run white / done black) | title / step | expect / actual | target / timer |
-|---|---|---|---|---|
-| light (the DSH UI in a browser: dark text on white) | 2.4:1 / **18.4:1** | **9.4:1** | 7.2:1 | 7.2 / 7.2:1 |
-| dark (a terminal: white text on black) | 2.6:1 / 18.4:1 | 7.7 / 7.0:1 | 5.9–6.7:1 | 6.5 / 6.8:1 |
-
-18 pt counts as large text: WCAG AAA asks 4.5:1, AA asks 3:1. Everything except the banner reaches AAA's body-text bar
-of 7:1. **The banner column is the one exception**: done sits at 18.4:1, far past AAA, while **run's 2.4:1 does not even
-reach AA** — that is the user-specified "white on red" (black on the same red measures 8.93:1). A **knowing aesthetic
-trade-off**, not a mis-computed palette.
-
-Sampling excludes the panel's own window by id, so the panel never hides itself and never flickers.
+The "chameleon" route: colours and luminances solved from the backdrop. `Theme.palette()` no longer calls it — `banner()` / `tinted()` / `textColor()` are still in the source, unused. What they compute necessarily lands outside the swatch, in direct conflict with the rule above, so **ask the user before reviving it**. History: `STATUS.md`.
 
 ## Visual design
 
 The layout follows CRAP deliberately; keep these rules when you edit it:
 
-- **Contrast** — colour carries exactly one meaning (status): the full-width control banner, plus a single coloured
-  character at the head of each step. Everything else is layered with **two** greys (their luminance solved from the
-  panel floor, see above) and four font weights, never with a second size — every line is `Look.base` (18 pt).
-  Two greys, not three: on a light ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
-- **Repetition** — one left edge for all content (`Look.inset`), and only three spacing values: 14 pt between groups,
-  10 pt between steps, 2–4 pt inside a step.
-- **Alignment** — the banner spans the full panel width and its text indents back to the content edge; a step's
-  expect/actual lines use a real `headIndent`, not spaces (spaces never line up in a proportional font).
-- **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose
-  between.
+- **Contrast** — colour carries exactly one meaning (status): the full-width control banner, plus a single coloured character at the head of each step. Everything else is layered with **two** greys (values in the table above) and four font weights, never with a second size — every line is `Look.base` (18 pt). Two greys, not three: on a light ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
+- **Repetition** — one left edge for all content (`Look.inset`, 16 pt), and only three spacing values: 14 pt between groups, 10 pt between steps, 2–4 pt inside a step.
+- **Alignment** — the banner spans the full panel width and its text indents back to the content edge; a step's expect/actual lines use a real `headIndent`, not spaces (spaces never line up in a proportional font).
+- **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose between.
 
-Measured in the worst case (dense dark text, see the table above): expect/actual 5.9–6.7:1, title 7.7:1 — both AAA.
-The banner is the one exception: done at 18.4:1 is the best figure on the panel, run at 2.4:1 the worst (the
-user-specified white on red). Its opacity is pinned at 0.75 (0.55 until 2026-09-18, raised to make vivid red / green
-actually possible) so the content behind it stays dimly visible.
-
-Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — and the hierarchy comes from weight alone
-(heavy for the control line, bold for the title and status, semibold for steps, regular for the expect/actual detail).
-The browser's DSH body text is `--dsh-content-font-size` (14 px by default, 12–17 settable); the panel sits above it
-because light text on a translucent dark panel reads smaller than black text on a page. Change `base` and the whole
-panel resizes with it.
+Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — and the hierarchy comes from weight alone (heavy for the control line, bold for the title and status, semibold for steps, regular for the expect/actual detail). The browser's DSH body text is `--dsh-content-font-size` (14 px by default, 12–17 settable); the panel sits above it because light text on a translucent dark panel reads smaller than black text on a page. Change `base` and the whole panel resizes with it. The other layout numbers: 16 pt padding (`Look.inset`), 14 pt corner radius (`Look.cornerRadius`), 1.0 pt border.
 
 ## Requirements
 
-- **A dsh host that provides `@deepseek-ai/dsh-tools`** — declared as a peer (`~0.2.0-rc.2` at the time of
-  writing), so `defineTool` is the host's own copy and a runtime outside the declared range is refused rather
-  than half-loaded. The package has no other runtime dependencies.
+- **A dsh host that provides `@deepseek-ai/dsh-tools`** — declared as a peer (`~0.2.0-rc.2` at the time of writing), so `defineTool` is the host's own copy and a runtime outside the declared range is refused rather than half-loaded. The package has no other runtime dependencies.
 - **macOS** for the panel itself (AppKit). The progress file and the tool work anywhere.
-- **Xcode Command Line Tools** for `swiftc` — the panel is compiled on first use into
-  `~/.dsh/dsh-testhud/bin/testhud` (about a second) and reused afterwards, so the package ships source, not binaries.
-  Without `swiftc` the tool still records every step and still returns the verdict; it just reports that it could not draw the panel.
+- **Xcode Command Line Tools** for `swiftc` — the panel is compiled on first use into `~/.dsh/dsh-testhud/bin/testhud` (3–4 s in practice on this machine) and reused afterwards, so the package ships source, not binaries. Without `swiftc` the tool still records every step and still returns the verdict; it just reports that it could not draw the panel.
 
 ## Development
 
 ### Inspect, don't guess
 
-`bin/testhud-inspect.py` is the observation tool for the panel's pixels. It reads the geometry the panel itself
-exports on every layout (`~/.dsh/dsh-testhud/panel-frame.json`), crops exactly that rectangle, and reports the panel's
-internal texture plus every OCR line inside it that does **not** belong to the panel's own content.
+`bin/testhud-inspect.py` is the observation tool for the panel's pixels. It reads the geometry the panel itself exports on every layout (`~/.dsh/dsh-testhud/panel-frame.json`), crops exactly that rectangle, and reports the panel's internal texture plus every OCR line inside it that does **not** belong to the panel's own content.
 
-Use it instead of reasoning about panel coordinates from a screenshot. Three separate conclusions in this project were
-wrong because the panel's rectangle was inferred from OCR output while the panel's position and size are dynamic —
-each time, content from *outside* the panel (the left half of a terminal, browser tab titles) was mistaken for text
-bleeding through.
+Use it instead of reasoning about panel coordinates from a screenshot: the panel's position and size are dynamic, and inferring them from OCR output mistakes content from *outside* the panel for text bleeding through. Contrast is computed from colour clusters rather than extreme pixels, and anything measuring under 1.5:1 is reported as an out-of-frame artifact rather than a contrast figure.
 
-It has since learned two traps, both of which produced wrong numbers first. An OCR box can reach **outside the colour
-band it names** — the banner's line box ran 20 px past the banner's bottom edge, so the panel's own dark fill was taken
-for "the text colour" and a true 5.3:1 was reported as 2.1:1; contrast is now computed from colour clusters rather than
-extreme pixels. And `belongs()`'s 3-gram rule can claim a background line that merely shares a fragment with the panel
-(a path containing `dsh-testhud`), which is why anything measuring under 1.5:1 is now reported as an out-of-frame
-artifact instead of a contrast figure. Text and its ground being nearly the same colour does not happen in reality.
-
-The simplest mistake cost the most. The three dots at the band's left end went through eight rounds of "still not
-rendering" before it turned out they had been on screen the whole time: the scan was handed `band height / 2`
-(20 px = 10 pt) while the dots' centres sit at 20.5 pt = **41 px**, so every scan passed 10 points above them.
-Looking at a screenshot settled it immediately.
-
-So: **when several rounds in a row report "nothing changed", suspect the instrument before changing the subject
-again.** A pixel-identical result across rounds, or several genuinely different implementations all "failing" the
-same way, are signs that the instrument is broken — not the thing being measured.
+**When several rounds in a row report "nothing changed", suspect the instrument before changing the subject again.** A pixel-identical result across rounds, or several genuinely different implementations all "failing" the same way, are signs that the instrument is broken — not the thing being measured.
 
 ### Test on a backdrop that contains text
 
-Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid
-area (blank page, empty terminal) cannot show the failure this panel exists to avoid: its own text fighting the text
-underneath, same size and similar colour, two layers of type in one place. A clean backdrop proves nothing about it.
+Sample a backdrop with **real text** under it — a source file, a terminal full of output, a chat transcript. A solid area (blank page, empty terminal) cannot show the failure this panel exists to avoid: its own text fighting the text underneath, same size and similar colour, two layers of type in one place. A clean backdrop proves nothing about it.
 
 ```sh
 # a throwaway profile, so your real one is untouched
@@ -326,8 +160,7 @@ dsh --profile hudtest "call test_hud: start, step, done"      # a real session m
 rm -rf ~/.dsh/profiles/hudtest                                # clean up
 ```
 
-`node_modules/@deepseek-ai/dsh-tools` is only needed for standalone `node lib/index.js` smoke tests; inside a dsh
-process the host resolves it. It is not part of the published package.
+`node_modules/@deepseek-ai/dsh-tools` is only needed for standalone `node lib/index.js` smoke tests; inside a dsh process the host resolves it. It is not part of the published package.
 
 ## How it works
 
@@ -335,9 +168,9 @@ process the host resolves it. It is not part of the published package.
 lib/index.js      Cordis host plugin: registers the test_hud tool + a system-prompt section
 lib/hud.js        progress file (~/.dsh/test-progress.json) and the panel process (build / start / stop)
 hud/testhud.swift the panel itself: borderless NSPanel at .screenSaver level, ignoresMouseEvents, polls the file every 0.4s
-                  (plus a second, transparent window covering only the colour band — the panel is click-through as a whole,
-                   so band dragging and the three dots are handled there: ignoresMouseEvents is per-window, one window
-                   cannot be "click-through here, solid there")
+                  (plus two small transparent helper windows that cover one region each — the band handle and the
+                   content drag hit layer: the panel is click-through as a whole, and ignoresMouseEvents is
+                   per-window, so one window cannot be "click-through here, solid there")
 bin/testhud.js    CLI over the same core
 ```
 
@@ -350,25 +183,13 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 
 ## Limitations
 
-- **One panel per machine.** The progress file is a single well-known path, so two concurrent test runs share one panel —
-  the last writer wins.
-- The panel is click-through by design, with **one exception: the top colour band**, which is the drag handle — without
-  it there would be no way to move the panel by hand. So a mouse landing on the band grips the panel instead of the app
-  underneath; `stop` / `done` make it go away.
-- **The band's left 78 points are reserved for the three dots**; the band text starts after them, so a long status
-  line cannot run into the dots.
-- Dragging leaves the panel **wherever you put it** — `layout()` only keeps the top edge fixed when the height
-  changes, it never snaps back to a candidate position — until the panel process restarts. The drag is clamped to the
-  visible area of the screen the mouse is on: otherwise the panel can be dropped into the dead space between two
-  displays, where nothing is visible and it can never be clicked again.
-- On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the
-  top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
-- **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it falls
-  to 3.7–5.0:1. This is not a parameter still waiting to be tuned — fully blocking a ~15:1 high-contrast layer needs a
-  panel opacity of 0.8 or more, which is to say an opaque panel, which throws away "the covered region stays visible".
-  0.50 is where those two meet.
-- **The panel's strings are Chinese** (the control banner, `测试对象：`, `期待：`, `实际：`, `结论：`). Nothing in the panel
-  is localised; a run's own title and step text are whatever the caller wrote.
+- **One panel per machine.** The progress file is a single well-known path, so two concurrent test runs share one panel — the last writer wins.
+- The panel is click-through by design, with **two exceptions**: the top colour band (the drag handle — without it there would be no way to move the panel by hand) and, while content overflows, the content drag hit layer. A mouse landing on either grips the panel instead of the app underneath; `stop` / `done` make it go away.
+- **The band's left 78 points are reserved for the three dots**; the band text starts after them, so a long status line cannot run into the dots.
+- Dragging leaves the panel **wherever you put it** — `layout()` only keeps the top edge fixed when the height changes, it never snaps back to a candidate position — until the panel process restarts. The drag is clamped to the visible area of the screen the mouse is on: otherwise the panel can be dropped into the dead space between two displays, where nothing is visible and it can never be clicked again.
+- On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
+- **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it is less legible than usual. This is not a parameter still waiting to be tuned — fully blocking a backdrop with that much contrast needs a panel opacity of 0.8 or more, which is to say an opaque panel, which throws away "the covered region stays visible". **0.50 is where those two meet.**
+- **The panel's strings are Chinese** (the control banner, `测试对象：`, `期待：`, `实际：`, `结论：`). Nothing in the panel is localised; a run's own title and step text are whatever the caller wrote.
 
 ## License
 
