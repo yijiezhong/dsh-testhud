@@ -20,7 +20,7 @@
 //     底部两个角已取消：面板高度随步骤增长、高度变化时顶边不动，贴底时下半截会被屏幕下缘切掉。
 //   · **大小**：随内容增减，到上限（屏幕可见高度的 62%）为止。
 //   · **滚动**：只有步骤区滚动，**头部固定**；新步骤进来自动滚到底。
-//   · **透明度**：面板底的不透明度**由环境反解**（见 Theme），下限 `Look.alphaFloor`（0.20）；
+//   · **透明度**：面板底的不透明度**由环境反解**（见 Theme），下限 `Look.alphaFloor`（0.08）；
 //     底图不模糊（2026-10-09 用户要求：要看得见被覆盖的文字）；
 //     方向与背景同向 —— 浅背景配更亮的面板 + 深字，深背景配更暗的面板 + 白字。
 //   · **层级**：`panel.level = .screenSaver` —— 压在所有窗口之上。
@@ -114,11 +114,12 @@ private enum Look {
     static let stepIndent: CGFloat = 28         // 步骤第二行（期待/实际）的缩进 = 行首 mark + 序号宽
 
     /// 面板底的**不透明度下限**（用在 `Theme.solveAlpha`）。
-    /// **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**，从 0.50 降到 0.20。
+    /// **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**：0.50 → 0.20 后实测仍偏淡
+    /// （20% 的面板底色把背景文字压灰），再降到 **0.08**。
     /// 要恢复"背景读不清"的老行为：这个值改回 0.50，并把下面 `backdropBlurSigma`
     /// 改回 34、`refreshTheme` 里的对比度压平改回 `max(0.12, 0.40 - spread * 0.70)`
     /// —— 三者是同一个取舍的三条腿，必须一起动。
-    static let alphaFloor: CGFloat = 0.20
+    static let alphaFloor: CGFloat = 0.08
     /// 面板底图的高斯模糊半径。**0 = 不模糊**：背景文字保持可辨（同上，用户 2026-10-09 要求；老值 34）。
     static let backdropBlurSigma: CGFloat = 0
 
@@ -234,7 +235,7 @@ enum ApplePalette {
 ///   · **面板底尽量透**（0.10 / 0.20 / 0.35 都试过）：密集文字背景上各会漏 1~3 行背景文字透上来，
 ///     而且漏的总是**刚打出来的内容** —— SCK 采样有 100~300ms 延迟，底图追不上正在被打印的字。
 ///
-/// 2026-10-09 用户重新拍了板：**要看得见被覆盖的文字** —— 透明度下限降到 `Look.alphaFloor`（0.20），
+/// 2026-10-09 用户重新拍了板：**要看得见被覆盖的文字** —— 透明度下限降到 `Look.alphaFloor`（0.08），
 /// 底图不再模糊、不再压平（见 `Look.backdropBlurSigma` 与 `refreshTheme` 里那两处）。
 /// 上面"接近全透不成立"那条结论，对**读清面板自己的字**仍然成立：深色密集背景下会抢读。
 /// 这是用户知情后选定的取舍，**不要再自行调回去**。
@@ -437,7 +438,7 @@ enum Theme {
     static func solveAlpha(over under: CGFloat, base: CGFloat, wanted: CGFloat) -> CGFloat {
         guard abs(base - under) > 0.01 else { return 0.75 }
         // **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**，下限从 0.50 降到
-        // `Look.alphaFloor`（0.20）。老值 0.50 的理由是"底图上残余的文字会和面板文字抢读"；
+        // `Look.alphaFloor`（0.08）。老值 0.50 的理由是"底图上残余的文字会和面板文字抢读"；
         // 那条取舍现在被推翻 —— 恢复"看不清背景"的老行为，把 `Look.alphaFloor` 改回 0.50，
         // 并把底图的模糊与压平一起调回去（见 `refreshTheme` 里那两处）。
         return min(0.98, max(Look.alphaFloor, (wanted - under) / (base - under)))
@@ -1014,10 +1015,12 @@ final class HUD: NSObject, NSApplicationDelegate {
         let previousSpread = spread
         let previousSize = sampledSize
         let size = frame.size
+        /// 快照像素尺寸 ÷ 它 = 点尺寸（用在下面 `NSImage(cgImage:size:)` 那处）
+        let scale = (panel.screen ?? NSScreen.main)?.backingScaleFactor ?? 2
 
         // 采样放**后台线程**：ScreenCaptureKit 的 async 调用和 @MainActor 会互等 ——
         // 症状是一条日志都不出、配色永远停在初始值（踩过）。采完再回主线程套用。
-        Task.detached { [rect, displayID, exclude, previous, previousSpread, previousSize, size] in
+        Task.detached { [rect, displayID, exclude, previous, previousSpread, previousSize, size, scale] in
             guard let (luminance, spread, meanColor, snapshot) =
                 await Self.capturePanelArea(rect, displayID: displayID, excluding: exclude) else {
                 FileHandle.standardError.write("testhud: sample FAILED\n".data(using: .utf8)!); return }
@@ -1032,7 +1035,14 @@ final class HUD: NSObject, NSApplicationDelegate {
                 self.spread = spread
                 self.backdropColor = meanColor
                 self.sampledSize = size
-                if let snapshot { self.blurView.image = NSImage(cgImage: snapshot, size: .zero) }
+                if let snapshot {
+                    // **点尺寸必须按 scale 折算**。`size: .zero` 会把像素尺寸当成点尺寸，
+                    // 于是这张 2x 的图先被视图压回一半、再由屏幕拉一次 —— 两次重采样，
+                    // 背景文字就发虚发淡了（2026-10-09 与采样分辨率一起修掉）。
+                    self.blurView.image = NSImage(cgImage: snapshot,
+                                                  size: NSSize(width: CGFloat(snapshot.width) / scale,
+                                                               height: CGFloat(snapshot.height) / scale))
+                }
                 self.applyPalette()
             }
         }
@@ -1047,7 +1057,9 @@ final class HUD: NSObject, NSApplicationDelegate {
             let mine = content.windows.filter { $0.windowID == CGWindowID(windowNumber) }
             let filter = SCContentFilter(display: display, excludingWindows: mine)
 
-            let outW = max(64, display.width / 4), outH = max(64, display.height / 4)
+            // 采样**必须全分辨率**。曾经是 `display.width / 4`，那张小图贴到面板上要被放大好几倍 ——
+            // 背景文字糊成一团，"看得见被覆盖的文字"根本无从谈起（2026-10-09 用户要求后实测定位到此）。
+            let outW = max(64, display.width), outH = max(64, display.height)
             let configuration = SCStreamConfiguration()
             configuration.width = outW
             configuration.height = outH
@@ -1064,8 +1076,12 @@ final class HUD: NSObject, NSApplicationDelegate {
             var sum = 0.0, count = 0
             var sumR = 0.0, sumG = 0.0, sumB = 0.0        // 顺带量出这块区域的颜色
             var hist = [Int](repeating: 0, count: 64)      // 以及它的明暗跨度
-            for y in y0..<y1 {
-                for x in x0..<x1 {
+            // 全分辨率下逐像素扫会白烧 CPU（4K 面板区域可达数百万像素）：**隔点取样**，
+            // 统计量（均值/跨度/平均色）的精度完全够用 —— 这些数只用来决定浅深档与配色。
+            // 注意写 `Swift.stride`：上面 `let stride = image.bytesPerRow` 把这个名字遮蔽了，
+            // 不写模块名会报 "cannot call value of non-function type 'Int'"。
+            for y in Swift.stride(from: y0, to: y1, by: 2) {
+                for x in Swift.stride(from: x0, to: x1, by: 2) {
                     let o = y * stride + x * bpp
                     let r = Double(data[o + 2]) / 255, g = Double(data[o + 1]) / 255, b = Double(data[o]) / 255
                     let v = 0.2126 * r + 0.7152 * g + 0.0722 * b
