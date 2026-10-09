@@ -504,6 +504,17 @@ enum Theme {
         // 0.373。也就是说"暗"会被抬亮、"亮"会被压暗，拿绝对亮度按老阈值判会**把深色背景判成浅色**，
         // 于是面板在深底上配出黑字（2026-10-09 踩到）。校准点：0.373（深）↔ 0.886（浅）。
         let lightPanel = backdrop > 0.60
+
+        // 背景**有没有颜色**也要看：站点蓝这种彩色背景上，蓝字会和背景糊成一片（实测 0.509 + 蓝底 → 认不出）。
+        // 顺带把"中性但亮度居中"的背景也挑出来（纯 #808080 满屏时蓝字对比只有 2.5:1）——
+        // 这两种情况正文都改用黑/白里对比更高的那一极。
+        let bgRGB = color.usingColorSpace(.deviceRGB) ?? color
+        var bgH: CGFloat = 0, bgS: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
+        bgRGB.getHue(&bgH, saturation: &bgS, brightness: &bgB, alpha: &bgA)
+        let chromaticBackdrop = bgS > 0.18 && bgB > 0.05
+        // 区间用采样值校准（采样过了色调映射，不是真实亮度）：0.45~0.75 覆盖中灰那一档。
+        let neutralMid = !chromaticBackdrop && backdrop > 0.45 && backdrop < 0.75
+        let useMonochromeText = chromaticBackdrop || neutralMid
         // 面板底：浅色系 纯白 / 深色系 石墨灰（均取自 Apple 色板）。
         // 不透明度仍由"要把面板推到目标亮度"反解 —— 这是保留下来的那半套自适应。
         // `color` 参数已不参与取色（旧变色龙拿它算互补色），保留签名只是为了不动调用点。
@@ -518,7 +529,11 @@ enum Theme {
         // 实测在白底黑字的背景上辨认起来很吃力。引入**颜色**这一维之后，浅色系用苹果蓝
         // `#0071E3`、深色系用亮蓝 `#2997FF`，与黑、白背景都能一眼分开。
         // 层次不再靠灰度，全部交给字重（同一字号，四档字重）；描边照旧按"与文字亮度相反"自动取黑/白。
-        let primary: NSColor = lightPanel ? ApplePalette.blue : ApplePalette.blueBright
+        let blueText: NSColor = lightPanel ? ApplePalette.blue : ApplePalette.blueBright
+        // 彩色／中性中灰背景：用黑/白里**对比度更高**的那一极（顺便，背景文字多半是白的，黑字正好与它相反）。
+        let monochromeText: NSColor = ((backdrop + 0.05) / 0.05) >= (1.05 / (backdrop + 0.05))
+            ? ApplePalette.black : ApplePalette.white
+        let primary: NSColor = useMonochromeText ? monochromeText : blueText
         let secondary = primary
 
         // ---- 色带：色板红 / 绿（用户 2026-10-04 定的取色来源）----
