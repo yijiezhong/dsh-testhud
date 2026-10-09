@@ -116,7 +116,13 @@ private enum Look {
     /// **变色龙 V2（用户 2026-10-09 定的方向）**：面板底**纯透明** —— 不铺任何底色、也不显示背景快照，
     /// 面板上只剩文字与一圈细边框。文字靠"与自身颜色相反的描边"（见 `HUD.outlined`）在任何背景上都能认出来。
     /// 改回 `false` 就回到"半透明底 + 背景快照"的老行为（那时下面两个常量才起作用）。
-    static let transparentPanel = true
+    static let transparentPanel: Bool = {
+        // 对比"整幅半透明底"与"纯透明底"时用（`DSH_TESTHUD_TRANSPARENT=0` 即回到半透明底 + 背景快照）。
+        if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_TRANSPARENT"] {
+            return !(s == "0" || s.lowercased() == "false")
+        }
+        return true
+    }()
 
     /// 描边粗细，**占字号的百分比**。Apple 的规则：**负值 = 填充 + 描边**，正值只描边（空心字）。
     /// 这个符号很关键 —— 早先试过正值那版，画出来是一圈空壳，看着像"描边没渲染出来"，其实就是符号反了。
