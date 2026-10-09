@@ -4,8 +4,6 @@ An always-on-top, click-through progress panel for automated tests in [DeepSeek 
 
 ![the panel](assets/panel.png)
 
-*Full-screen shot: the panel floating over a live session window. The window's content, the sidebar text and the menu-bar icon area are masked.*
-
 ## Why it exists
 
 When an agent drives a GUI, compares screenshots or renders a batch for a few minutes, the human just sits there: they cannot tell which step it is on, what the step expects, whether it already failed, or — the question that actually matters — **whether it is safe to touch the mouse and keyboard again**.
