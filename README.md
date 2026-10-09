@@ -109,15 +109,15 @@ The height has a ceiling, so with enough content the upper part is pushed outsid
 | Panel ground | **fully transparent** | **fully transparent** |
 | Border (1.0 pt, `Look.panelBorderWidth`) | black `#000000` | white `#FFFFFF` |
 | Text (title / step name / conclusion / expect / actual — **one colour**) | Apple blue `#0071E3` | bright blue `#2997FF` |
-| Text stroke (`Look.strokeWidthPercent`) | white | black |
 | Text shadow (`Look.textShadowBlur`, even on all sides) | white | black |
+| ~~Text stroke~~ | off by default (`strokeWidthPercent = 0`) | same |
 | Step marks | ✓ `#34C759` / ✗ `#FF3B30` / ⏳ `#FF9500` / • same as body | same |
 
 **Why the body text is blue and not black/white**: the backdrop itself is usually black or white text, so a black/white panel would leave the two layers distinguishable only by their stroke — hard to read over dense text (measured). With blue, the **colour** dimension separates the layers. Hierarchy no longer rides on grey levels: it is all font weight (one size, four weights).
 
 **Exception**: when the backdrop is **itself coloured** (a whole page of site blue, say) or is **a neutral mid grey**, the body switches to whichever of black/white has the higher contrast — blue on a blue backdrop blurs into it (it became unreadable in testing), and blue on mid grey only reaches 2.5:1; black/white also happens to be the opposite of the backdrop's own text in those two cases.
 
-**The stroke and the shadow both take "the backdrop's pole"** (white in the light scheme, black in the dark one): they blend into the backdrop, and their job is to push the backdrop's own strokes out from under the panel's letters. Note that `strokeWidth`'s absolute value **must stay small** — a large one makes the stroke eat the fill and the glyphs get thinner (`-2.5%` is the measured ceiling).
+**The shadow takes "the backdrop's pole"** (white in the light scheme, black in the dark one): it blends into the backdrop, and its job is to push the backdrop's own strokes out from under the panel's letters. **The stroke is off by default** (`strokeWidthPercent = 0`) — three variants were compared side by side: a stroke makes 18 pt glyphs look fat and grubby, whereas a pure shadow stays clean and reads just as well. The capability is kept (set a negative value to enable it).
 
 The band ignores the light/dark split and follows the state: **running = red `#FF3B30` + white text**, **done = green `#34C759` + black text**; the band's opacity is **0.75**. The three traffic lights are swatch values too (red `#FF3B30`, yellow `#FFCC00`, green `#34C759`) with a 1.0 pt white stroke. **The band is the only opaque piece left.**
 

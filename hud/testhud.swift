@@ -125,17 +125,19 @@ private enum Look {
         if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_STROKE"], let v = Double(s) {
             return CGFloat(v)
         }
-        // **-2.5 是实测的上限**：绝对值再大，描边就会反过来啃掉填充，字越描越细
-        // （-6 时整行文字淡得像重影）。真正拉开层次的是下面那圈阴影。
-        return -2.5
+        // **默认 0：不用描边。** 三种方案实拍对比过（描边+阴影 / 纯阴影 4 / 纯阴影 7）：
+        // 描边会让 18pt 的中文字形发胖、边缘发脏（`strokeWidth` 负值在填充之外又描一圈），
+        // 纯阴影既干净又能把背景笔画推开。能力留着（设成负值即可启用），但默认关。
+        return 0
     }()
 
     /// 文字阴影的模糊半径（0 = 不要阴影）。阴影色取"背景那一极"，四周均匀、无方向。
+    /// **4 是实拍选出来的平衡点**：3 时推不开密集背景字，7 时白雾感偏重。
     static let textShadowBlur: CGFloat = {
         if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_SHADOW"], let v = Double(s) {
             return CGFloat(v)
         }
-        return 3
+        return 4
     }()
 
     /// 面板底的**不透明度下限**（只在 `transparentPanel == false` 时起作用）。
@@ -839,12 +841,16 @@ final class HUD: NSObject, NSApplicationDelegate {
         guard Look.transparentPanel, s.length > 0 else { return s }
         let m = NSMutableAttributedString(attributedString: s)
         let full = NSRange(location: 0, length: m.length)
-        m.addAttribute(.strokeWidth, value: Look.strokeWidthPercent, range: full)
-        // 描边色与阴影色都取**背景那一极**（浅色系白、深色系黑）。它们与背景融为一体，
-        // 效果是把压在文字底下的背景笔画"推开"，文字本身反而更清楚 —— 比让描边与文字反色更有效：
-        // 与文字反色的描边会在白底上变成一圈黑、跟背景的黑字连成一片。
+        // 阴影色取**背景那一极**（浅色系白、深色系黑）：它与背景融为一体，作用是把压在文字底下的
+        // 背景笔画"推开"。比让描边与文字反色更有效 —— 与文字反色的描边会在白底上变成一圈黑、
+        // 跟背景的黑字连成一片。
         let opposite = backdrop > 0.60 ? ApplePalette.white : ApplePalette.black
-        m.addAttribute(.strokeColor, value: opposite, range: full)
+        // 描边默认关闭（`strokeWidthPercent = 0`）：它会让字形发胖、边缘发脏，实拍对比后弃用。
+        // 想启用就把常量设成负值（负值 = 填充 + 描边）。
+        if Look.strokeWidthPercent != 0 {
+            m.addAttribute(.strokeWidth, value: Look.strokeWidthPercent, range: full)
+            m.addAttribute(.strokeColor, value: opposite, range: full)
+        }
         if Look.textShadowBlur > 0 {
             let shadow = NSShadow()
             shadow.shadowColor = opposite.withAlphaComponent(0.9)
