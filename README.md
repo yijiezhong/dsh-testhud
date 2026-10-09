@@ -1,5 +1,8 @@
 # dsh-testhud
 
+[![npm version](https://img.shields.io/npm/v/dsh-testhud)](https://www.npmjs.com/package/dsh-testhud)
+[![license](https://img.shields.io/npm/l/dsh-testhud)](LICENSE)
+
 An always-on-top, click-through progress panel for automated tests in [DeepSeek Harness](https://github.com/deepseek-ai) (dsh), drawn **over the app under test** — plus the `test_hud` tool that drives it from any session.
 
 ![the panel](assets/panel-en.png)
@@ -22,7 +25,7 @@ This panel answers exactly that, on screen, without stealing focus:
 ```sh
 dsh plugin --profile <profile> add github:yijiezhong/dsh-testhud   # straight from GitHub
 dsh plugin --profile <profile> add link:/path/to/dsh-testhud       # from a local checkout
-dsh plugin --profile <profile> add dsh-testhud                     # from the registry (once published)
+dsh plugin --profile <profile> add dsh-testhud                     # from npm (published as 0.1.1)
 ```
 
 The Desktop app installs the same way (plugin settings); its plugin manager **mounts a new bundle live** — the row is composed immediately and the host is not restarted. A CLI-launched profile composes its bundle list at boot, so restart once unless your profile reloads patches live.

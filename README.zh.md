@@ -1,5 +1,8 @@
 # dsh-testhud
 
+[![npm version](https://img.shields.io/npm/v/dsh-testhud)](https://www.npmjs.com/package/dsh-testhud)
+[![license](https://img.shields.io/npm/l/dsh-testhud)](LICENSE)
+
 把自动测试的进展**画在被测界面之上**的浮层：置顶、鼠标穿透、不抢焦点，配一个任何 session 都能直接调的 `test_hud` 工具。
 
 ![浮层长这样](assets/panel.png)
@@ -22,7 +25,7 @@ agent 驱动 GUI、比对截图、批量渲染，一跑就是几分钟。这段�
 ```sh
 dsh plugin --profile <profile> add github:yijiezhong/dsh-testhud   # 直接从 GitHub 装
 dsh plugin --profile <profile> add link:/path/to/dsh-testhud       # 从本地 checkout 装
-dsh plugin --profile <profile> add dsh-testhud                     # 从 registry 装（已发布时）
+dsh plugin --profile <profile> add dsh-testhud                     # 从 npm 装（已发布 0.1.1）
 ```
 
 Desktop 应用走同一条路（插件设置页），由插件管理器**热挂载**：新增的 bundle 立刻组合进来、宿主不重启。CLI 起的 profile 只在启动时组合 bundle 列表，如果你的 profile 不是 `patchReload: live`，装完重启一次。
