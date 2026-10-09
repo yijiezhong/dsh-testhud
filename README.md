@@ -102,27 +102,34 @@ The height has a ceiling, so with enough content the upper part is pushed outsid
 
 **Every colour on the panel must exist in the Apple swatch** — the 22 colours on page 1 of the swatch (`Apple色板/1Apple配色色卡.key`, on this machine under `$HOME/PARA/8.Code/AIDoc/设计规范/`): 9 neutrals + 3 blues + 10 functional. The single source of truth in code is `ApplePalette` in `hud/testhud.swift`, all built in **sRGB** (`calibrated*` constructors shift the values).
 
+**Chameleon V2 (2026-10-09)**: the panel's ground is **fully transparent** — no fill, no backdrop snapshot; only text and a hairline border remain. Whatever is underneath stays visible, and the panel's own text is kept legible on any backdrop by three things (stroke + shadow + colour):
+
 | Part | Light appearance | Dark appearance |
 |---|---|---|
-| Panel background | white `#FFFFFF` | graphite `#1D1D1F` |
-| Border (1.0 pt, `Look.panelBorderWidth`) | mid grey `#6E6E73` | white `#FFFFFF` |
-| Primary text (title / step name / conclusion) | black `#000000` | white `#FFFFFF` |
-| Secondary text (expect / actual / meta) | mid grey `#6E6E73` | grey `#86868B` |
-| Step marks | ✓ `#34C759` / ✗ `#FF3B30` / ⏳ `#FF9500` / • same as secondary | same |
+| Panel ground | **fully transparent** | **fully transparent** |
+| Border (1.0 pt, `Look.panelBorderWidth`) | black `#000000` | white `#FFFFFF` |
+| Text (title / step name / conclusion / expect / actual — **one colour**) | Apple blue `#0071E3` | bright blue `#2997FF` |
+| Text stroke (`Look.strokeWidthPercent`) | white | black |
+| Text shadow (`Look.textShadowBlur`, even on all sides) | white | black |
+| Step marks | ✓ `#34C759` / ✗ `#FF3B30` / ⏳ `#FF9500` / • same as body | same |
 
-The band ignores the light/dark split and follows the state: **running = red `#FF3B30` + white text**, **done = green `#34C759` + black text**; the band's opacity is **0.75**. The three traffic lights are swatch values too (red `#FF3B30`, yellow `#FFCC00`, green `#34C759`) with a 1.0 pt white stroke.
+**Why the body text is blue and not black/white**: the backdrop itself is usually black or white text, so a black/white panel would leave the two layers distinguishable only by their stroke — hard to read over dense text (measured). With blue, the **colour** dimension separates the layers. Hierarchy no longer rides on grey levels: it is all font weight (one size, four weights).
 
-The step marks are `✓` / `✗` / `⏳` / `•` and **not** `✅` / `❌`: colour emoji ignore `foregroundColor` and paint colours of their own, outside the swatch, so the glyph had to change. By the same token, emoji the caller (an agent) writes into a step name, expect or actual are not governed by `ApplePalette`. White on red vs black on green are deliberately not symmetric in contrast — a **knowing aesthetic trade-off**, so do not "fix" it into a contrast-maximising pick.
+**The stroke and the shadow both take "the backdrop's pole"** (white in the light scheme, black in the dark one): they blend into the backdrop, and their job is to push the backdrop's own strokes out from under the panel's letters. Note that `strokeWidth`'s absolute value **must stay small** — a large one makes the stroke eat the fill and the glyphs get thinner (`-2.5%` is the measured ceiling).
 
-**Only two things are still computed**: which appearance to use (`backdrop > 0.35`) and the panel background's opacity (`solveAlpha`, floor **0.08**). The user explicitly kept **translucency**, so white over a backdrop does not measure as `#FFFFFF`; the rule is therefore "**the value comes from the swatch**", not "the rendered pixel equals it". The backdrop is sampled every 0.7 s — *the rectangle the panel is about to cover*, and only that rectangle, plus immediately whenever the frontmost app changes or the panel resizes or changes content — yielding an average luminance and a light/dark spread (p10–p90), which decide the appearance. The panel's ground is **a snapshot of what it covers** (no blur, no contrast flattening): the covered text stays legible — the effect the user asked for on 2026-10-09, at the cost of competing with the panel's own text over dense backdrops.
+The band ignores the light/dark split and follows the state: **running = red `#FF3B30` + white text**, **done = green `#34C759` + black text**; the band's opacity is **0.75**. The three traffic lights are swatch values too (red `#FF3B30`, yellow `#FFCC00`, green `#34C759`) with a 1.0 pt white stroke. **The band is the only opaque piece left.**
 
-The old "chameleon" colour functions (`banner()` / `tinted()` / `textColor()`) are still in the source and no longer called; they necessarily compute colours outside the swatch, in direct conflict with the rule above, so **ask the user before reviving them**.
+The step marks are `✓` / `✗` / `⏳` / `•` and **not** `✅` / `❌`: colour emoji ignore `foregroundColor` and paint colours of their own, outside the swatch, so the glyph had to change. By the same token, emoji the caller (an agent) writes into a step name, expect or actual are not governed by `ApplePalette`.
+
+**Only one thing is still computed**: which appearance to use. It reads the **median** luminance of the sampled rectangle (not the mean — dense text lifts the mean, which made a dark backdrop with white text look "light" and produced black panel text). The threshold **0.60 is empirically calibrated**: what ScreenCaptureKit returns has been **tone-mapped** (measured: pure white 1.000 comes back as 0.886, the dark grey `#1D1D1F` at 0.106 comes back as 0.373), so comparing against the textbook 0.5 inverts the decision. The backdrop is sampled every 0.7 s — *the rectangle the panel is about to cover*, and only that rectangle, plus immediately whenever the frontmost app changes or the panel resizes or changes content.
+
+Two earlier palettes remain in the source unused (`banner()` / `tinted()` / `textColor()`, plus the "translucent ground + backdrop snapshot" route); **ask the user before reviving them**.
 
 ## Visual design
 
 The layout follows CRAP deliberately; keep these rules when you edit it:
 
-- **Contrast** — colour carries exactly one meaning (status): the full-width control banner, plus a single coloured character at the head of each step. Everything else is layered with **two** greys (values in the table above) and four font weights, never with a second size — every line is `Look.base` (18 pt). Two greys, not three: on a light ground a third step drops below 3:1, and three greys are hard to tell apart anyway.
+- **Contrast** — colour carries two jobs: status (the band and the step marks) and the **body colour** (swatch blue, which is what separates the panel's text from a black/white backdrop — see the table above). Hierarchy rides on **four font weights**, never on a second size — every line is `Look.base` (18 pt).
 - **Repetition** — one left edge for all content (`Look.inset`, 16 pt), and only three spacing values: 14 pt between groups, 10 pt between steps, 2–4 pt inside a step.
 - **Alignment** — the banner spans the full panel width and its text indents back to the content edge; a step's expect/actual lines use a real `headIndent`, not spaces (spaces never line up in a proportional font).
 - **Proximity** — header (title / target / timer), steps, and the conclusion are three groups: tight inside, loose between.
@@ -186,7 +193,7 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 - **The band's left 78 points are reserved for the three dots**; the band text starts after them, so a long status line cannot run into the dots.
 - Dragging leaves the panel **wherever you put it** — `layout()` only keeps the top edge fixed when the height changes, it never snaps back to a candidate position — until the panel process restarts. The drag is clamped to the visible area of the screen the mouse is on: otherwise the panel can be dropped into the dead space between two displays, where nothing is visible and it can never be clicked again.
 - On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
-- **The panel's own text gets weaker in the worst case**: over dense dark text (a terminal full of output, say) it competes with the text underneath — the panel floor is only **0.08** and the backdrop is no longer blurred, which is exactly what the user asked for on 2026-10-09 ("the covered text must stay visible"). To go back to "the backdrop reads as texture, the panel's text stays steadier": set `Look.alphaFloor` back to 0.50 and `Look.backdropBlurSigma` back to 34.
+- **In the worst case the panel's text competes with the backdrop's text**: over dense text (a terminal full of output, say) the two layers sit on top of each other — a transparent ground is exactly what makes the backdrop visible, and the stroke / shadow / blue is what pays for it. To go back to "translucent ground + backdrop snapshot": set `Look.transparentPanel` to `false` (only then do `Look.alphaFloor` and `Look.backdropBlurSigma` matter).
 - **The panel's strings are Chinese** (the control banner, `测试对象：`, `期待：`, `实际：`, `结论：`). Nothing in the panel is localised; a run's own title and step text are whatever the caller wrote.
 
 ## License

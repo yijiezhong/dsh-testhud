@@ -113,14 +113,41 @@ private enum Look {
     static let lineGap: CGFloat = 3             // 行内行距
     static let stepIndent: CGFloat = 28         // 步骤第二行（期待/实际）的缩进 = 行首 mark + 序号宽
 
-    /// 面板底的**不透明度下限**（用在 `Theme.solveAlpha`）。
-    /// **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**：0.50 → 0.20 后实测仍偏淡
-    /// （20% 的面板底色把背景文字压灰），再降到 **0.08**。
-    /// 要恢复"背景读不清"的老行为：这个值改回 0.50，并把下面 `backdropBlurSigma`
-    /// 改回 34、`refreshTheme` 里的对比度压平改回 `max(0.12, 0.40 - spread * 0.70)`
-    /// —— 三者是同一个取舍的三条腿，必须一起动。
-    static let alphaFloor: CGFloat = 0.08
-    /// 面板底图的高斯模糊半径。**0 = 不模糊**：背景文字保持可辨（同上，用户 2026-10-09 要求；老值 34）。
+    /// **变色龙 V2（用户 2026-10-09 定的方向）**：面板底**纯透明** —— 不铺任何底色、也不显示背景快照，
+    /// 面板上只剩文字与一圈细边框。文字靠"与自身颜色相反的描边"（见 `HUD.outlined`）在任何背景上都能认出来。
+    /// 改回 `false` 就回到"半透明底 + 背景快照"的老行为（那时下面两个常量才起作用）。
+    static let transparentPanel = true
+
+    /// 描边粗细，**占字号的百分比**。Apple 的规则：**负值 = 填充 + 描边**，正值只描边（空心字）。
+    /// 这个符号很关键 —— 早先试过正值那版，画出来是一圈空壳，看着像"描边没渲染出来"，其实就是符号反了。
+    static let strokeWidthPercent: CGFloat = {
+        // 扫描边粗细用（同 `alphaFloor` 的做法），免得每换一档就重编译。
+        if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_STROKE"], let v = Double(s) {
+            return CGFloat(v)
+        }
+        // **-2.5 是实测的上限**：绝对值再大，描边就会反过来啃掉填充，字越描越细
+        // （-6 时整行文字淡得像重影）。真正拉开层次的是下面那圈阴影。
+        return -2.5
+    }()
+
+    /// 文字阴影的模糊半径（0 = 不要阴影）。阴影色取"背景那一极"，四周均匀、无方向。
+    static let textShadowBlur: CGFloat = {
+        if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_SHADOW"], let v = Double(s) {
+            return CGFloat(v)
+        }
+        return 3
+    }()
+
+    /// 面板底的**不透明度下限**（只在 `transparentPanel == false` 时起作用）。
+    /// 历史：0.50（老取舍）→ 0.20 → 0.08（用户 2026-10-09 要求"要能看到被覆盖的文字"）。
+    static let alphaFloor: CGFloat = {
+        // 调"透明度 ↔ 文字可读性"的平衡时可用环境变量扫值，免得每换一个数就重编译。
+        if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_ALPHA_FLOOR"], let v = Double(s) {
+            return CGFloat(v)
+        }
+        return 0.08
+    }()
+    /// 底图的高斯模糊半径。**0 = 不模糊**（同上；老值 34）。
     static let backdropBlurSigma: CGFloat = 0
 
     // 同一字号（base），四档字重；层次另一半来自灰度。
@@ -471,19 +498,28 @@ enum Theme {
     /// 它们算出来的颜色必然落在 Apple 色板之外，与新规矩直接冲突。
     static func palette(for backdrop: CGFloat, color: NSColor = .gray) -> Palette {
         // 方向仍然成立：面板与背景**同向** —— 浅背景配更亮的面板 + 深字，深背景配更暗的面板 + 白字。
-        let lightPanel = backdrop > 0.35
+        //
+        // ⚠️ 阈值 **0.60 是实测校准值**，不是教科书里的 0.5 / 0.35。原因：ScreenCaptureKit 采样出来的
+        // 图过了**色调映射**（S 曲线）—— 实测纯白 1.000 被采成 0.886、深灰 #1D1D1F 的 0.106 被采成
+        // 0.373。也就是说"暗"会被抬亮、"亮"会被压暗，拿绝对亮度按老阈值判会**把深色背景判成浅色**，
+        // 于是面板在深底上配出黑字（2026-10-09 踩到）。校准点：0.373（深）↔ 0.886（浅）。
+        let lightPanel = backdrop > 0.60
         // 面板底：浅色系 纯白 / 深色系 石墨灰（均取自 Apple 色板）。
         // 不透明度仍由"要把面板推到目标亮度"反解 —— 这是保留下来的那半套自适应。
         // `color` 参数已不参与取色（旧变色龙拿它算互补色），保留签名只是为了不动调用点。
         let fillBase = lightPanel ? ApplePalette.white : ApplePalette.graphite
-        let fillAlpha = solveAlpha(over: backdrop, base: luminance(fillBase),
-                                   wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
+        // 变色龙 V2：面板底纯透明 —— 不铺底色也不显示快照，反解出来的 alpha 只在老模式下才用得上。
+        let fillAlpha = Look.transparentPanel ? 0 : solveAlpha(over: backdrop, base: luminance(fillBase),
+                                                              wanted: lightPanel ? lightPanelTarget : darkPanelTarget)
 
-        // 文字：**不再按对比度反解**（那会算出色板外的灰阶），直接用色板两极 —— 一级纯黑 / 纯白。
-        let primary = lightPanel ? ApplePalette.black : ApplePalette.white
-        // 二级：色板里"次要文字"那两个灰 —— 浅色系中灰、深色系灰。
-        // （中灰落在石墨灰底上只剩 ~1.3:1，所以深色系必须换成更亮的灰，不能两档共用一个。）
-        let secondary = lightPanel ? ApplePalette.midGray : ApplePalette.gray
+        // 文字：**不再按对比度反解**（那会算出色板外的灰阶）。
+        // **变色龙 V2（2026-10-09）**：正文不再取黑/白，改用色板里的蓝 —— 面板底透明之后，
+        // 背景本身常常就是黑字或白字，浮层文字若也用黑/白，两层字就只能靠描边区分，
+        // 实测在白底黑字的背景上辨认起来很吃力。引入**颜色**这一维之后，浅色系用苹果蓝
+        // `#0071E3`、深色系用亮蓝 `#2997FF`，与黑、白背景都能一眼分开。
+        // 层次不再靠灰度，全部交给字重（同一字号，四档字重）；描边照旧按"与文字亮度相反"自动取黑/白。
+        let primary: NSColor = lightPanel ? ApplePalette.blue : ApplePalette.blueBright
+        let secondary = primary
 
         // ---- 色带：色板红 / 绿（用户 2026-10-04 定的取色来源）----
         // 语义沿用 2026-09-18 定下的那套：**红＝进行中、别动；绿＝已结束、可以接手**。
@@ -508,7 +544,9 @@ enum Theme {
             panelFill: fillBase.withAlphaComponent(fillAlpha),
             // 边框用**不透明**的色板色；粗细见 `Look.panelBorderWidth`。
             // 浅色系用**中灰**（用户 2026-10-04：纯黑在白底上太硬，改成中灰 `#6E6E73`）、深色系仍用纯白。
-            panelBorder: lightPanel ? ApplePalette.midGray : ApplePalette.white,
+            // 边框**与背景相反**（用户 2026-10-09 定的）：浅色系用纯黑、深色系用纯白。
+            // 面板底透明之后，这圈细线是"浮层边界在哪"的唯一提示（老值浅色系是中灰 `#6E6E73`）。
+            panelBorder: lightPanel ? ApplePalette.black : ApplePalette.white,
             primary: primary,
             secondary: secondary,
             alertRunBg: runBase,
@@ -620,6 +658,9 @@ final class HUD: NSObject, NSApplicationDelegate {
         blurView.wantsLayer = true
         blurView.layer?.cornerRadius = Look.cornerRadius
         blurView.layer?.masksToBounds = true
+        // 变色龙 V2：**不显示快照** —— 面板要的是"真透明"（直接透出实时背景），而不是贴一张背景的拷贝。
+        // 采样本身照旧保留（配色还要用它的均值与跨度）。
+        blurView.isHidden = Look.transparentPanel
         root.addSubview(blurView)
 
         // 面板底：一层半透明色，颜色与不透明度都由 backdrop 反解（见 Theme）。
@@ -777,6 +818,28 @@ final class HUD: NSObject, NSApplicationDelegate {
 
     // MARK: 渲染
 
+    /// 给文字加一圈**与它自己颜色相反**的描边 —— 面板底透明之后，这是"文字在任何背景上都能被认出来"的手段。
+    /// 亮的字配深描边、暗的字配浅描边；描边色只取色板两极（纯黑／纯白），不引入色板外的颜色。
+    private func outlined(_ s: NSAttributedString) -> NSAttributedString {
+        guard Look.transparentPanel, s.length > 0 else { return s }
+        let m = NSMutableAttributedString(attributedString: s)
+        let full = NSRange(location: 0, length: m.length)
+        m.addAttribute(.strokeWidth, value: Look.strokeWidthPercent, range: full)
+        // 描边色与阴影色都取**背景那一极**（浅色系白、深色系黑）。它们与背景融为一体，
+        // 效果是把压在文字底下的背景笔画"推开"，文字本身反而更清楚 —— 比让描边与文字反色更有效：
+        // 与文字反色的描边会在白底上变成一圈黑、跟背景的黑字连成一片。
+        let opposite = backdrop > 0.60 ? ApplePalette.white : ApplePalette.black
+        m.addAttribute(.strokeColor, value: opposite, range: full)
+        if Look.textShadowBlur > 0 {
+            let shadow = NSShadow()
+            shadow.shadowColor = opposite.withAlphaComponent(0.9)
+            shadow.shadowBlurRadius = Look.textShadowBlur
+            shadow.shadowOffset = .zero      // 四周均匀，不留方向感
+            m.addAttribute(.shadow, value: shadow, range: full)
+        }
+        return m
+    }
+
     private func render() {
         guard let data = FileManager.default.contents(atPath: progressPath),
               let p = try? JSONDecoder().decode(Progress.self, from: data) else { return }
@@ -802,11 +865,11 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         if fingerprint != lastFingerprint {
             lastFingerprint = fingerprint
-            alertField.attributedStringValue = alert
+            alertField.attributedStringValue = outlined(alert)
             alertBand.layer?.backgroundColor = alertBackgroundNow().cgColor
-            headerField.attributedStringValue = head
-            stepsField.attributedStringValue = body
-            footerField.attributedStringValue = foot
+            headerField.attributedStringValue = outlined(head)
+            stepsField.attributedStringValue = outlined(body)
+            footerField.attributedStringValue = outlined(foot)
             layout(alert: alert, head: head, body: body, foot: foot)
             scrollStepsToBottom()
         }
@@ -1063,27 +1126,41 @@ final class HUD: NSObject, NSApplicationDelegate {
             let configuration = SCStreamConfiguration()
             configuration.width = outW
             configuration.height = outH
+            // 显式要 **sRGB** 输出。不设的话 SCK 按显示器的原生色彩空间出图，而下面读像素时是
+            // 按 sRGB 解释的 —— 实测深色背景（真实中位亮度 0.106）被采成 0.385，正好差一次
+            // gamma 编码；浅深档会因此判反，在深底上配出黑字来。
+            configuration.colorSpaceName = CGColorSpace.sRGB
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
 
-            guard let data = image.dataProvider?.data as Data? else { return nil }
-            let stride = image.bytesPerRow, bpp = image.bitsPerPixel / 8
             // 分母用**点**（display.frame），因为传进来的 rect 就是点。
             let k = CGFloat(outW) / display.frame.width
             let x0 = max(0, Int(rect.minX * k)), y0 = max(0, Int(rect.minY * k))
             let x1 = min(image.width, x0 + max(1, Int(rect.width * k)))
             let y1 = min(image.height, y0 + max(1, Int(rect.height * k)))
+            guard let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)),
+                  cropped.width > 0, cropped.height > 0 else { return nil }
+
+            // ⚠️ **先重绘到已知的 sRGB / 8-bit / RGBA，再读像素**。直接读 `dataProvider` 的原始字节
+            // 要同时赌通道顺序与色彩空间两件事，实测赌错了：深色背景（真实中位亮度 0.106）被读成
+            // 0.388，浅深档因此判反、在深底上配出黑字（图是全屏不透明的，多出来的那截亮度就是
+            // 把 alpha 通道当成颜色读了）。
+            let cw = cropped.width, ch = cropped.height
+            var buf = [UInt8](repeating: 0, count: cw * ch * 4)
+            guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+                  let ctx = CGContext(data: &buf, width: cw, height: ch, bitsPerComponent: 8,
+                                      bytesPerRow: cw * 4, space: cs,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+            ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: cw, height: ch))
 
             var sum = 0.0, count = 0
             var sumR = 0.0, sumG = 0.0, sumB = 0.0        // 顺带量出这块区域的颜色
             var hist = [Int](repeating: 0, count: 64)      // 以及它的明暗跨度
             // 全分辨率下逐像素扫会白烧 CPU（4K 面板区域可达数百万像素）：**隔点取样**，
-            // 统计量（均值/跨度/平均色）的精度完全够用 —— 这些数只用来决定浅深档与配色。
-            // 注意写 `Swift.stride`：上面 `let stride = image.bytesPerRow` 把这个名字遮蔽了，
-            // 不写模块名会报 "cannot call value of non-function type 'Int'"。
-            for y in Swift.stride(from: y0, to: y1, by: 2) {
-                for x in Swift.stride(from: x0, to: x1, by: 2) {
-                    let o = y * stride + x * bpp
-                    let r = Double(data[o + 2]) / 255, g = Double(data[o + 1]) / 255, b = Double(data[o]) / 255
+            // 统计量（中位数/跨度/平均色）的精度完全够用 —— 这些数只用来决定浅深档与配色。
+            for y in Swift.stride(from: 0, to: ch, by: 2) {
+                for x in Swift.stride(from: 0, to: cw, by: 2) {
+                    let o = (y * cw + x) * 4
+                    let r = Double(buf[o]) / 255, g = Double(buf[o + 1]) / 255, b = Double(buf[o + 2]) / 255
                     let v = 0.2126 * r + 0.7152 * g + 0.0722 * b
                     sum += v
                     sumR += r; sumG += g; sumB += b
@@ -1091,7 +1168,20 @@ final class HUD: NSObject, NSApplicationDelegate {
                     count += 1
                 }
             }
-            let luminance = count > 0 ? sum / Double(count) : 0.5
+            // 直方图分位数（下面判浅深、算跨度都要用）
+            func pct(_ p: Double) -> Double {
+                var acc = 0
+                for (i, n) in hist.enumerated() {
+                    acc += n
+                    if Double(acc) >= p * Double(count) { return Double(i) / 64 }
+                }
+                return 1
+            }
+            // ⚠️ 判"这块背景是浅是深"必须用**中位数**，不能用平均值：密集文字会把平均值抬起来
+            // —— 深底 + 密集白字的区域平均值能超过 0.35，面板就误判成浅色系、在深背景上配出黑字
+            // （2026-10-09 实测：深底白字背景上浮层文字是黑的，只能靠白描边勉强认出来）。
+            // 中位数更接近"底色"，对文字覆盖率不敏感。
+            let luminance = count > 0 ? pct(0.50) : 0.5
             // 这块区域的平均颜色。只用来问一件事：**这里到底有没有颜色。**
             // 有颜色的背景上，面板文字和背景文字往往是同一个颜色（都是白字或都是黑字），
             // 亮度对比已经拉满，能再把两层字分开的只剩下色相 —— 文字该取它的互补色。
@@ -1102,25 +1192,14 @@ final class HUD: NSObject, NSApplicationDelegate {
             // **大尺度明暗**留在面板上，而面板上的文字只有一个颜色 —— 一边亮一边暗时，无论配深字
             // 还是白字都会有一半失准（实测：同一块面板上底色从 0.51 到 0.31，白字对亮的那半只有 2.5:1）。
             // 跨度是"这个风险有多大"的唯一量度，底图该压多平、由它决定。
-            var spread: CGFloat = 0
-            if count > 0 {
-                func pct(_ p: Double) -> Double {
-                    var acc = 0
-                    for (i, n) in hist.enumerated() {
-                        acc += n
-                        if Double(acc) >= p * Double(count) { return Double(i) / 64 }
-                    }
-                    return 1
-                }
-                spread = CGFloat(pct(0.90) - pct(0.10))
-            }
+            let spread = count > 0 ? CGFloat(pct(0.90) - pct(0.10)) : 0
 
             // 面板那块位置的一份快照 —— 它会成为面板的底。**2026-10-09 起不模糊**：
             // 用户要求"看得见被覆盖的文字"，见 `Look.backdropBlurSigma`。
             var blurred: CGImage?
             /// 面板底的**等效背景亮度** —— 会被换成"底图真实的均值"，见下面。
             var effective = luminance
-            if let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) {
+            do {   // 快照直接用上面裁好并校验过的那一块（不再重复 crop）
                 // 【已按用户要求推翻】老结论：σ=14 时密集文字仍能辨认出字形、与面板文字抢读，
                 // 于是加大 σ 并把对比度压低，把背景退成"低对比的纹理"。
                 // 2026-10-09 用户要的正是"看得见被覆盖的文字"：σ=0、对比度不压。
