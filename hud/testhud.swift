@@ -121,7 +121,8 @@ private enum Look {
         if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_TRANSPARENT"] {
             return !(s == "0" || s.lowercased() == "false")
         }
-        return true
+        // **默认 false ＝ 半透明底**：用户 2026-10-09 拍板采用 B 方案（半透明底 + 无阴影 + 无描边）。
+        return false
     }()
 
     /// 描边粗细，**占字号的百分比**。Apple 的规则：**负值 = 填充 + 描边**，正值只描边（空心字）。
@@ -143,7 +144,9 @@ private enum Look {
         if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_SHADOW"], let v = Double(s) {
             return CGFloat(v)
         }
-        return 4
+        // **默认 0＝不要阴影**：B 方案（半透明底）下阴影本来就不起作用 —— 蒙层已把背景压淡，
+        // 阴影落在蒙层上没有可推开的东西（实测"半透明+无阴影"与"半透明+阴影"量化结果逐位相同）。
+        return 0
     }()
 
     /// 面板底的**不透明度下限**（只在 `transparentPanel == false` 时起作用）。
@@ -153,7 +156,8 @@ private enum Look {
         if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_ALPHA_FLOOR"], let v = Double(s) {
             return CGFloat(v)
         }
-        return 0.08
+        // **默认 0.50**：B 方案（半透明底）的蒙层浓度，用户 2026-10-09 选定。
+        return 0.50
     }()
     /// 底图的高斯模糊半径。**0 = 不模糊**（同上；老值 34）。
     static let backdropBlurSigma: CGFloat = 0
@@ -479,6 +483,52 @@ enum Theme {
         return min(0.98, max(Look.alphaFloor, (wanted - under) / (base - under)))
     }
 
+    /// sRGB → **WCAG 相对亮度**（线性化）。现有的 `luminance(_:)` 是 gamma 空间的加权平均，
+    /// 用来"比大小"够用，但算对比度必须线性化（否则浅色区会被系统性高估）。
+    static func relLuminance(_ c: NSColor) -> CGFloat {
+        let rgb = c.usingColorSpace(.sRGB) ?? c
+        func lin(_ v: CGFloat) -> CGFloat { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * lin(rgb.redComponent) + 0.7152 * lin(rgb.greenComponent) + 0.0722 * lin(rgb.blueComponent)
+    }
+
+    /// WCAG 对比度（1 ~ 21）。
+    static func contrastRatio(_ a: NSColor, _ b: NSColor) -> CGFloat {
+        let la = relLuminance(a), lb = relLuminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    /// 从色板里挑一个"在这一背景上最好读、又不与背景糊在一起"的正文色。
+    ///
+    /// 两个维度决定选择：**亮度对比**（能不能读）与**色相差异**（会不会跟背景同色系糊掉）。
+    /// 色板网格实测的规律：黑白因为无彩，几乎在任何背景上都安全，但背景自己的文字往往也是黑/白 ——
+    /// 所以还要惩罚"与背景文字同色"，否则两层字会连成一片。
+    private static func pickTextColor(backdrop: CGFloat, backdropColor: NSColor) -> NSColor {
+        // ⚠️ 这里**不能用"打分选优"**：背景亮度是拿采样值当灰阶近似的，而采样过了色调映射
+        // （暗部抬亮、亮部压暗：实测深灰 0.106→0.373、暖橙 0.75→0.562），绝对亮度不可信 ——
+        // 打分制试过，出现"黑底配黑字""白底选不出蓝"这类错误。改成规则化：先按背景性质分档，
+        // 每档里只做一次**相对比较**（同一背景下的两个候选谁对比更高），可预测得多。
+        let bgGray = NSColor(srgbRed: backdrop, green: backdrop, blue: backdrop, alpha: 1)
+        let bgRGB = backdropColor.usingColorSpace(.sRGB) ?? backdropColor
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        bgRGB.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        /// 两个候选里对比更高的那个（同一背景，相对比较可靠）
+        func better(_ x: NSColor, _ y: NSColor) -> NSColor {
+            contrastRatio(x, bgGray) >= contrastRatio(y, bgGray) ? x : y
+        }
+        // ① 背景**本身有颜色**（站点蓝、暖橙、深绿…）：用黑/白里对比更高的一极 ——
+        //    有彩候选容易与背景同色系糊掉（实测蓝底配蓝字认不出来）。
+        // ② 背景**中性但亮度居中**（纯 #808080 那种）：也用黑/白 —— 蓝字在中灰上只有 2.5:1。
+        if (s > 0.18 && b > 0.05) || (backdrop > 0.45 && backdrop < 0.75) {
+            return better(ApplePalette.black, ApplePalette.white)
+        }
+        // ③ 中性浅底：色板里的两个蓝，取对比更高的
+        if backdrop > 0.60 {
+            return better(ApplePalette.blue, ApplePalette.indigo)
+        }
+        // ④ 中性深底：亮蓝 / 薄荷
+        return better(ApplePalette.blueBright, ApplePalette.mint)
+    }
+
     /// "亮度 text 的文字要够 `contrast`，衬底该落在什么亮度"。
     /// `darker` 指衬底在文字的暗侧（白字配暗底）；否则在亮侧（深字配亮底）。
     static func plateLum(text: CGFloat, contrast: CGFloat, darker: Bool) -> CGFloat {
@@ -513,16 +563,8 @@ enum Theme {
         // 于是面板在深底上配出黑字（2026-10-09 踩到）。校准点：0.373（深）↔ 0.886（浅）。
         let lightPanel = backdrop > 0.60
 
-        // 背景**有没有颜色**也要看：站点蓝这种彩色背景上，蓝字会和背景糊成一片（实测 0.509 + 蓝底 → 认不出）。
-        // 顺带把"中性但亮度居中"的背景也挑出来（纯 #808080 满屏时蓝字对比只有 2.5:1）——
-        // 这两种情况正文都改用黑/白里对比更高的那一极。
-        let bgRGB = color.usingColorSpace(.deviceRGB) ?? color
-        var bgH: CGFloat = 0, bgS: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
-        bgRGB.getHue(&bgH, saturation: &bgS, brightness: &bgB, alpha: &bgA)
-        let chromaticBackdrop = bgS > 0.18 && bgB > 0.05
-        // 区间用采样值校准（采样过了色调映射，不是真实亮度）：0.45~0.75 覆盖中灰那一档。
-        let neutralMid = !chromaticBackdrop && backdrop > 0.45 && backdrop < 0.75
-        let useMonochromeText = chromaticBackdrop || neutralMid
+        // "背景有没有颜色／是不是中性中灰"不再单独判定：正文色现在由 `Theme.pickTextColor` 统一按
+        // 亮度对比 + 色相差异打分选出（见该函数注释）。
         // 面板底：浅色系 纯白 / 深色系 石墨灰（均取自 Apple 色板）。
         // 不透明度仍由"要把面板推到目标亮度"反解 —— 这是保留下来的那半套自适应。
         // `color` 参数已不参与取色（旧变色龙拿它算互补色），保留签名只是为了不动调用点。
@@ -537,11 +579,9 @@ enum Theme {
         // 实测在白底黑字的背景上辨认起来很吃力。引入**颜色**这一维之后，浅色系用苹果蓝
         // `#0071E3`、深色系用亮蓝 `#2997FF`，与黑、白背景都能一眼分开。
         // 层次不再靠灰度，全部交给字重（同一字号，四档字重）；描边照旧按"与文字亮度相反"自动取黑/白。
-        let blueText: NSColor = lightPanel ? ApplePalette.blue : ApplePalette.blueBright
-        // 彩色／中性中灰背景：用黑/白里**对比度更高**的那一极（顺便，背景文字多半是白的，黑字正好与它相反）。
-        let monochromeText: NSColor = ((backdrop + 0.05) / 0.05) >= (1.05 / (backdrop + 0.05))
-            ? ApplePalette.black : ApplePalette.white
-        let primary: NSColor = useMonochromeText ? monochromeText : blueText
+        // 正文色**自适应**（2026-10-09 用户要求：不必一直用同一种颜色）：
+        // 在色板候选里打分选一个，浅/深背景、中性/彩色背景各会选出不同的颜色。
+        let primary: NSColor = Theme.pickTextColor(backdrop: backdrop, backdropColor: color)
         let secondary = primary
 
         // ---- 色带：色板红 / 绿（用户 2026-10-04 定的取色来源）----
