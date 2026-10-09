@@ -2,7 +2,7 @@
 
 An always-on-top, click-through progress panel for automated tests in [DeepSeek Harness](https://github.com/deepseek-ai) (dsh), drawn **over the app under test** — plus the `test_hud` tool that drives it from any session.
 
-![the panel](assets/panel.png)
+![the panel](assets/panel-en.png)
 
 ## Why it exists
 
@@ -202,8 +202,8 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 - **The band's left 78 points are reserved for the three dots**; the band text starts after them, so a long status line cannot run into the dots.
 - Dragging leaves the panel **wherever you put it** — `layout()` only keeps the top edge fixed when the height changes, it never snaps back to a candidate position — until the panel process restarts. The drag is clamped to the visible area of the screen the mouse is on: otherwise the panel can be dropped into the dead space between two displays, where nothing is visible and it can never be clicked again.
 - On a screen already covered by full-screen windows, every corner overlaps something; `auto` then falls back to the top-left corner. Pass an explicit `anchor` to keep the panel away from the area you are testing.
-- **In the worst case the panel's text competes with the backdrop's text**: over dense text (a terminal full of output, say) the two layers sit on top of each other — a transparent ground is exactly what makes the backdrop visible, and the stroke / shadow / blue is what pays for it. To go back to "translucent ground + backdrop snapshot": set `Look.transparentPanel` to `false` (only then do `Look.alphaFloor` and `Look.backdropBlurSigma` matter).
-- **The panel's strings are Chinese** (the control banner, `测试对象：`, `期待：`, `实际：`, `结论：`). Nothing in the panel is localised; a run's own title and step text are whatever the caller wrote.
+- **In the worst case the panel's text competes with the backdrop's text**: over dense text (a terminal full of output, say) the two layers sit on top of each other. The answer is **a translucent ground plus an adaptive body colour**: the ground pushes the backdrop back one layer, and the body colour is picked for the backdrop (see "Colours"). To go fully transparent instead (text has to fend for itself): set `Look.transparentPanel` to `true` — only in that mode is the text shadow (`textShadowBlur`) worth turning on.
+- **The panel's own strings are bilingual** (the control band, `测试对象：` / `Target:`, `期待：` / `Expect:`, `实际：` / `Actual:`, `结论：` / `Conclusion:`): English when the system's preferred language starts with `en`, otherwise Chinese; `DSH_TESTHUD_LANG=en` forces it (used for screenshots and tests). A run's title and step text are whatever the caller wrote.
 
 ## License
 

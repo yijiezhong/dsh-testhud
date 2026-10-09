@@ -60,6 +60,20 @@ let topInsetArg = CommandLine.arguments.count > 3 ? (Double(CommandLine.argument
 
 // MARK: - 尺寸与样式
 
+/// 面板上出现的每一句文案都在这里出双语。
+/// 语言判定：`DSH_TESTHUD_LANG`（截图与测试用）优先，否则看系统首选语言 —— 以 `en` 开头就用英文。
+enum L10n {
+    static let english: Bool = {
+        if let s = ProcessInfo.processInfo.environment["DSH_TESTHUD_LANG"] {
+            return s.lowercased().hasPrefix("en")
+        }
+        return (Locale.preferredLanguages.first ?? "zh").lowercased().hasPrefix("en")
+    }()
+
+    /// 中文在前、英文在后。调用点就是完整的一句，别把句子拆成片段拼。
+    static func t(_ zh: String, _ en: String) -> String { english ? en : zh }
+}
+
 private enum Look {
     /// 唯一字号（pt）——**全部文字都是这个号**，层次只靠灰度与字重。
     /// 浏览器里 DSH 的正文字号是 `--dsh-content-font-size`（默认 14px），macOS 的 point 与浏览器
@@ -1655,9 +1669,12 @@ final class HUD: NSObject, NSApplicationDelegate {
         // 色带上这三行也**不带彩色 emoji**（同 `Look.Mark` 的理由：色板规矩）。
         // 原来的 run 态前面是 "🖱️⌨️" 两个彩色 emoji，已去掉 —— 紧跟其后的文字本来就写着
         // "鼠标键盘"，留着只是重复，还白添两处色板外的颜色。
-        case "done":   return "\(Look.Mark.ok) 已结束，可以收回鼠标键盘的控制权了"
-        case "failed": return "\(Look.Mark.warn) 已结束（有失败），可以收回控制权；结论见下方"
-        default:       return "正在进行：先别动鼠标键盘，以免打断测试"
+        case "done":   return L10n.t("\(Look.Mark.ok) 已结束，可以收回鼠标键盘的控制权了",
+                                     "\(Look.Mark.ok) Finished — you can take back the mouse and keyboard")
+        case "failed": return L10n.t("\(Look.Mark.warn) 已结束（有失败），可以收回控制权；结论见下方",
+                                     "\(Look.Mark.warn) Finished (with failures) — you can take back control; see the conclusion below")
+        default:       return L10n.t("正在进行：先别动鼠标键盘，以免打断测试",
+                                     "In progress — please keep off the mouse and keyboard")
         }
     }
 
@@ -1669,13 +1686,14 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         ]))
         if let t = p.target, !t.isEmpty {
-            out.append(NSAttributedString(string: "测试对象：" + t + "\n", attributes: [
+            out.append(NSAttributedString(string: L10n.t("测试对象：", "Target: ") + t + "\n", attributes: [
                 .font: Look.bodyFont, .foregroundColor: palette.secondary, .paragraphStyle: Look.para(after: 2),
             ]))
         }
         if let s = p.startedAt {
             let elapsed = Date().timeIntervalSince1970 - s
-            out.append(NSAttributedString(string: String(format: "开始 %@ · 已用 %.0f 秒", timeString(s), elapsed),
+            out.append(NSAttributedString(string: L10n.t(String(format: "开始 %@ · 已用 %.0f 秒", timeString(s), elapsed),
+                                                            String(format: "Started %@ · %.0f s elapsed", timeString(s), elapsed)),
                                           attributes: [
                 .font: Look.metaFont, .foregroundColor: palette.secondary, .paragraphStyle: Look.para(),
             ]))
@@ -1705,13 +1723,13 @@ final class HUD: NSObject, NSApplicationDelegate {
             ]))
             // 真正缩进（headIndent），不是空格 —— 比例字体下空格对不齐。
             if let e = step.expect, !e.isEmpty {
-                out.append(NSAttributedString(string: "期待：" + e + "\n", attributes: [
+                out.append(NSAttributedString(string: L10n.t("期待：", "Expect: ") + e + "\n", attributes: [
                     .font: Look.bodyFont, .foregroundColor: palette.secondary,
                     .paragraphStyle: Look.para(indent: Look.stepIndent),
                 ]))
             }
             if let a = step.actual, !a.isEmpty {
-                out.append(NSAttributedString(string: "实际：" + a + "\n", attributes: [
+                out.append(NSAttributedString(string: L10n.t("实际：", "Actual: ") + a + "\n", attributes: [
                     .font: Look.bodyFont, .foregroundColor: palette.secondary,
                     .paragraphStyle: Look.para(indent: Look.stepIndent),
                 ]))
@@ -1723,7 +1741,7 @@ final class HUD: NSObject, NSApplicationDelegate {
     /// 结论一组：字重回到 semibold、颜色回到最亮 —— 与步骤区分开。
     private func composeFooter(_ p: Progress) -> NSAttributedString {
         guard let n = p.note, !n.isEmpty else { return NSAttributedString() }
-        return NSAttributedString(string: "结论：" + n, attributes: [
+        return NSAttributedString(string: L10n.t("结论：", "Conclusion: ") + n, attributes: [
             .font: Look.stepFont, .foregroundColor: palette.primary, .paragraphStyle: Look.para(),
 
         ])
