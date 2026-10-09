@@ -20,7 +20,8 @@
 //     底部两个角已取消：面板高度随步骤增长、高度变化时顶边不动，贴底时下半截会被屏幕下缘切掉。
 //   · **大小**：随内容增减，到上限（屏幕可见高度的 62%）为止。
 //   · **滚动**：只有步骤区滚动，**头部固定**；新步骤进来自动滚到底。
-//   · **透明度**：面板底的不透明度**由环境反解**（见 Theme），下限 0.50（用户定的取舍）；
+//   · **透明度**：面板底的不透明度**由环境反解**（见 Theme），下限 `Look.alphaFloor`（0.20）；
+//     底图不模糊（2026-10-09 用户要求：要看得见被覆盖的文字）；
 //     方向与背景同向 —— 浅背景配更亮的面板 + 深字，深背景配更暗的面板 + 白字。
 //   · **层级**：`panel.level = .screenSaver` —— 压在所有窗口之上。
 //   · **字号**：全部 18（`Look.base`），唯一可调的地方。
@@ -111,6 +112,15 @@ private enum Look {
     static let stepGap: CGFloat = 10            // 步骤与步骤之间
     static let lineGap: CGFloat = 3             // 行内行距
     static let stepIndent: CGFloat = 28         // 步骤第二行（期待/实际）的缩进 = 行首 mark + 序号宽
+
+    /// 面板底的**不透明度下限**（用在 `Theme.solveAlpha`）。
+    /// **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**，从 0.50 降到 0.20。
+    /// 要恢复"背景读不清"的老行为：这个值改回 0.50，并把下面 `backdropBlurSigma`
+    /// 改回 34、`refreshTheme` 里的对比度压平改回 `max(0.12, 0.40 - spread * 0.70)`
+    /// —— 三者是同一个取舍的三条腿，必须一起动。
+    static let alphaFloor: CGFloat = 0.20
+    /// 面板底图的高斯模糊半径。**0 = 不模糊**：背景文字保持可辨（同上，用户 2026-10-09 要求；老值 34）。
+    static let backdropBlurSigma: CGFloat = 0
 
     // 同一字号（base），四档字重；层次另一半来自灰度。
     static let alertFont = NSFont.systemFont(ofSize: base, weight: .heavy)      // 控制权色带
@@ -224,11 +234,10 @@ enum ApplePalette {
 ///   · **面板底尽量透**（0.10 / 0.20 / 0.35 都试过）：密集文字背景上各会漏 1~3 行背景文字透上来，
 ///     而且漏的总是**刚打出来的内容** —— SCK 采样有 100~300ms 延迟，底图追不上正在被打印的字。
 ///
-/// 结论是"接近全透"在高对比底层上不成立：面板压在铺满整屏的黑底白字（~15:1）上时，
-/// 要真挡住得实到 0.8 以上，那就等于不透明了。于是取 **0.50** 作下限（用户拍板）：
-/// 普通背景上面板文字早已远超 AAA，被遮挡区域仍看得出明暗与形状。
-///
-/// 底图（面板位置的一份模糊快照）负责把残余的背景文字化成柔和的光斑 —— 它是这 0.50 之外的另一半手段。
+/// 2026-10-09 用户重新拍了板：**要看得见被覆盖的文字** —— 透明度下限降到 `Look.alphaFloor`（0.20），
+/// 底图不再模糊、不再压平（见 `Look.backdropBlurSigma` 与 `refreshTheme` 里那两处）。
+/// 上面"接近全透不成立"那条结论，对**读清面板自己的字**仍然成立：深色密集背景下会抢读。
+/// 这是用户知情后选定的取舍，**不要再自行调回去**。
 enum Theme {
     /// 面板底的目标亮度：让面板**离开中灰**。浅面板要够亮、深面板要够暗，
     /// 否则不管配深字还是白字都压不住（实测：终端里密布文字时平均亮度被抬到 0.45，
@@ -424,16 +433,14 @@ enum Theme {
     }
 
     /// 反解"要把这一层压/提到 `wanted` 亮度，它需要多不透明"：结果 = a×base + (1−a)×底下，解 a。
-    /// 夹在 [0.30, 0.95] —— 下界保证这一层还看得见，上界保证它不变成死板的实心块。
+    /// 夹在 [`Look.alphaFloor`, 0.98] —— 下界保证这一层还看得见，上界保证它不变成死板的实心块。
     static func solveAlpha(over under: CGFloat, base: CGFloat, wanted: CGFloat) -> CGFloat {
         guard abs(base - under) > 0.01 else { return 0.75 }
-        // 下限 0.50（用户定的取舍）：**"接近全透"在高对比底层上不成立**。
-        // 面板压在终端那种铺满整屏的黑底白字上时，底图（模糊 + 压淡）压不平残余，
-        // 下限放到 0.10 会让残余直接暴露、面板自己的文字掉到 2.2:1（实测）。
-        // 而挡不住的原因不是"不够实" —— 底层是 ~15:1 的高对比内容，要完全挡住得实到 0.8 以上，
-        // 那就等于不透明了。所以这里选 0.50：面板文字在普通背景上早已远超 AAA，
-        // 被遮挡区域仍然看得出明暗与形状。
-        return min(0.98, max(0.50, (wanted - under) / (base - under)))
+        // **2026-10-09 用户要求"提高透明度，要能看到被覆盖的文字"**，下限从 0.50 降到
+        // `Look.alphaFloor`（0.20）。老值 0.50 的理由是"底图上残余的文字会和面板文字抢读"；
+        // 那条取舍现在被推翻 —— 恢复"看不清背景"的老行为，把 `Look.alphaFloor` 改回 0.50，
+        // 并把底图的模糊与压平一起调回去（见 `refreshTheme` 里那两处）。
+        return min(0.98, max(Look.alphaFloor, (wanted - under) / (base - under)))
     }
 
     /// "亮度 text 的文字要够 `contrast`，衬底该落在什么亮度"。
@@ -605,8 +612,8 @@ final class HUD: NSObject, NSApplicationDelegate {
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Look.width, height: 96))
 
-        // 底层：面板位置的一份模糊快照。它让后方内容变成柔和的光斑 —— 仍看得出"下面有东西"，
-        // 但不会与面板文字抢读（这一步替代了"给每行压一块不透明底板"）。
+        // 底层：面板位置的一份快照（**2026-10-09 起不模糊**，见 `Look.backdropBlurSigma`）。
+        // 它替代了"给每行压一块不透明底板"，同时让被覆盖的内容原样可见。
         blurView = NSImageView(frame: root.bounds)
         blurView.imageScaling = .scaleAxesIndependently
         blurView.wantsLayer = true
@@ -1092,36 +1099,43 @@ final class HUD: NSObject, NSApplicationDelegate {
                 spread = CGFloat(pct(0.90) - pct(0.10))
             }
 
-            // 面板那块位置的一份**模糊快照** —— 它会成为面板的底。
-            // 后方内容因此变成柔和的光斑：仍然看得出"下面有东西"，但不会和面板文字抢读。
+            // 面板那块位置的一份快照 —— 它会成为面板的底。**2026-10-09 起不模糊**：
+            // 用户要求"看得见被覆盖的文字"，见 `Look.backdropBlurSigma`。
             var blurred: CGImage?
             /// 面板底的**等效背景亮度** —— 会被换成"底图真实的均值"，见下面。
             var effective = luminance
             if let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) {
-                // σ 要够大：14 时密集文字仍能辨认出字形，和面板文字抢读（截图里一眼就看出来）。
-                // 再把对比度压低 —— 背景退成"低对比的纹理"，这比提高面板不透明度更划算：
-                // 后者会增加遮挡，前者不增加。
+                // 【已按用户要求推翻】老结论：σ=14 时密集文字仍能辨认出字形、与面板文字抢读，
+                // 于是加大 σ 并把对比度压低，把背景退成"低对比的纹理"。
+                // 2026-10-09 用户要的正是"看得见被覆盖的文字"：σ=0、对比度不压。
                 // **用原图的 extent 导出，不能用模糊后的** —— CIGaussianBlur 会把 extent 向外扩约 3σ，
                 // 用它的 extent 导出会带上一圈透明边：341×249 的图里有效内容只有 185×93，
                 // 贴到面板上拉伸之后，面板的边缘区域其实根本没有底图覆盖，原始背景就直接露出来了
                 // （这就是"密集文字仍能读出来"的真正原因，查了很久）。
                 let ci = CIImage(cgImage: cropped)
-                // σ 与对比度是两把不同的刀：σ 负责把字形化开，对比度负责把剩下的痕迹压淡。
-                // 面板压在最密的文字上时（终端铺满整屏的 ls 输出），σ=26 之后仍留下条纹状的痕迹
-                // —— 低方差行占比只有 16%（稀疏背景时是 43~51%），所以两把刀都加一点。
-                //
-                // 对比度再按**跨度**自适应：跨度大就压得更平。压平不增加遮挡（面板底的不透明度没动），
-                // 代价只是"下面有东西"的痕迹变淡 —— 那比让面板自己的文字失准划算。
-                let contrast = max(0.12, 0.40 - spread * 0.70)
+                // 【已按用户要求推翻】老做法：σ 把字形化开、对比度把残余痕迹压淡，
+                // 对比度还按跨度自适应（跨度大压得更平）。2026-10-09 起这两把刀都收起来了 ——
+                // 用户要"看得见被覆盖的文字"，代价是面板自己的字在密集背景下会被抢读。
+                // **2026-10-09 用户要求"要能看到被覆盖的文字"**：不再把底图往中灰压平
+                // （老值 `max(0.12, 0.40 - spread * 0.70)`）。压平会让背景文字退成低对比纹理，
+                // 与模糊是同一套取舍的两把刀 —— 恢复老行为就一起调回。
+                let contrast: CGFloat = 1.0
                 // 再把均值**锚回 backdrop**。这一步是必须的：对比度是围绕中灰压缩的，
                 // 压完之后这块图的均值不再是 backdrop（0.30 的图会被抬到 0.42），
                 // 而配色算法是拿 backdrop 算面板底的 —— 两者一旦不一致，算出来的对比度就是假的，
                 // 面板会照着一个不存在的底去配文字色（这正是"底色 0.51 到 0.31"那次的根因）。
                 let offset = (luminance - 0.5) * (1 - contrast)
-                let blurredCI = ci.applyingGaussianBlur(sigma: 34)
+                // σ 与饱和度同样按"看得见被覆盖的文字"取：**不模糊、不降饱和**
+                // （老值 σ=34、饱和度 0.70）。模糊会把字形化开、降饱和会让背景字变灰淡，
+                // 都与"看清底下写了什么"直接冲突。
+                var backdropCI = ci
+                if Look.backdropBlurSigma > 0 {
+                    backdropCI = ci.applyingGaussianBlur(sigma: Look.backdropBlurSigma)
+                }
+                let blurredCI = backdropCI
                     .applyingFilter("CIColorControls", parameters: [
                         kCIInputContrastKey: contrast,
-                        kCIInputSaturationKey: 0.70,
+                        kCIInputSaturationKey: 1.0,
                     ])
                     // 亮度单独一次，保证它是压在对比度**之后**的线性偏移（同一个 filter 里的先后顺序不可靠）
                     .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: offset])
