@@ -20,8 +20,9 @@ This panel answers exactly that, on screen, without stealing focus:
 ## Install
 
 ```sh
-dsh plugin --profile <profile> add link:/path/to/dsh-testhud   # from a checkout
-dsh plugin --profile <profile> add dsh-testhud                 # from the registry
+dsh plugin --profile <profile> add github:yijiezhong/dsh-testhud   # straight from GitHub
+dsh plugin --profile <profile> add link:/path/to/dsh-testhud       # from a local checkout
+dsh plugin --profile <profile> add dsh-testhud                     # from the registry (once published)
 ```
 
 The Desktop app installs the same way (plugin settings); its plugin manager **mounts a new bundle live** — the row is composed immediately and the host is not restarted. A CLI-launched profile composes its bundle list at boot, so restart once unless your profile reloads patches live.
