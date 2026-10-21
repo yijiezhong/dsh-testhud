@@ -152,8 +152,8 @@ testhud status
 ## 依赖
 
 - **一个提供 `@deepseek-ai/dsh-tools` 的 dsh 宿主**——声明为 peer（写这份时是 `~0.2.0-rc.2`），因此 `defineTool` 用的是宿主自己那份；运行版本落在范围外时宿主会拒绝加载本 bundle，而不是半挂上。本包没有别的运行时依赖。
-- **浮层本体要 macOS**（AppKit）。进度文件与工具本身在哪都能用。
-- **要 Xcode 命令行工具**（`swiftc`）：浮层在第一次使用时现编到 `~/.dsh/dsh-testhud/bin/testhud`（本机实测约 3~4 秒），之后复用——所以包里带的是源码，不是二进制。没有 `swiftc` 时工具照样记录每一步、照样给结论，只是如实告诉你"浮层没画出来"。
+- **浮层本体要 macOS 14 及以上**（AppKit + ScreenCaptureKit 的 `SCShareableContent` / `SCScreenshotManager`）。进度文件与工具本身在哪都能用；系统低于 14 时浮层画不出来，工具会如实报告。
+- **不需要 Xcode 命令行工具**：包里带一份 **universal 预编译二进制**（`hud/testhud.macos-universal`，arm64 + x86_64 通吃），装上即可用。只有当预编译产物缺失、不可复制时才回退到用 `swiftc` 现编译 `hud/testhud.swift` 到 `~/.dsh/dsh-testhud/bin/testhud`（本机实测约 3~4 秒）——那条路才需要 `xcode-select --install`。
 
 ## 开发自测
 

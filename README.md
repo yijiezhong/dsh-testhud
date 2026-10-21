@@ -152,8 +152,8 @@ Every line is the same size — `Look.base` (18 pt) in `hud/testhud.swift` — a
 ## Requirements
 
 - **A dsh host that provides `@deepseek-ai/dsh-tools`** — declared as a peer (`~0.2.0-rc.2` at the time of writing), so `defineTool` is the host's own copy and a runtime outside the declared range is refused rather than half-loaded. The package has no other runtime dependencies.
-- **macOS** for the panel itself (AppKit). The progress file and the tool work anywhere.
-- **Xcode Command Line Tools** for `swiftc` — the panel is compiled on first use into `~/.dsh/dsh-testhud/bin/testhud` (3–4 s in practice on this machine) and reused afterwards, so the package ships source, not binaries. Without `swiftc` the tool still records every step and still returns the verdict; it just reports that it could not draw the panel.
+- **macOS 14+** for the panel itself (AppKit + ScreenCaptureKit's `SCShareableContent` / `SCScreenshotManager`). The progress file and the tool work anywhere; on older systems the panel cannot be drawn and the tool reports that.
+- **Xcode Command Line Tools are not required**: the package ships a **universal prebuilt binary** (`hud/testhud.macos-universal`, arm64 + x86_64), so it works as installed. Only when that prebuilt is missing or cannot be copied does it fall back to compiling `hud/testhud.swift` with `swiftc` into `~/.dsh/dsh-testhud/bin/testhud` (~3–4 s here) — that path needs `xcode-select --install`.
 
 ## Development
 
