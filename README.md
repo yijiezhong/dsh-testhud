@@ -212,3 +212,8 @@ The progress file schema is deliberately plain JSON, so anything can write it:
 ## License
 
 MIT
+
+---
+
+**Author**: Yijie Zhong — AI adoption consultant, trainer, and agile coach.
+Website: [www.yijiezhong.com](https://www.yijiezhong.com)
